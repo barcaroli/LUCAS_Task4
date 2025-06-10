@@ -16,7 +16,7 @@ import pandas as pd
 import json
 
 # Set the working directory
-os.chdir("D:/Google Drive/LUCAS Copernicus/EarthEngine/")
+os.chdir("C:\\Users\\UTENTE\\Google Drive laptop\\LUCAS Copernicus\\EarthEngine\\EarthEngineDownload")
 # Alternative for another user:
 # os.chdir("C:\\Users\\UTENTE\\Google Drive\\LUCAS Copernicus\\DynamicWorld")
 

@@ -9,11 +9,11 @@
 #         2. LUCAS survey data of a given year / country augmented with EE data 
 #------------------------------------------------------------------------------
 library(data.table)
-setwd("D:/Google Drive/LUCAS Copernicus/EarthEngine")
+setwd("D:/Google Drive/LUCAS Copernicus/EarthEngine/Processing")
 # setwd("C:/Users/UTENTE/Google Drive laptop/LUCAS Copernicus/EarthEngine")
 #---------------------------------------------------------
 # Input: 1. dataset obtained by Google Earth Engine for a given year / country
-inp <- fread(".\\values\\S2_S1_GLCM_Italy_2018.csv")
+inp <- fread("D:\\Google Drive\\LUCAS Copernicus\\EarthEngine\\EarthEngineDownload\\S2_S1_GLCM_Italy_2018.csv")
 inp$NDVI <- (inp$B8-inp$B4) / (inp$B8+inp$B4)
 inp$NDWI <- (inp$B8-inp$B3) / (inp$B8+inp$B3)
 inp$EVI <- (inp$B8-inp$B4) / 2.5 * (inp$B8 + 6*inp$B4 - 7.5*inp$B2 + 0.5)

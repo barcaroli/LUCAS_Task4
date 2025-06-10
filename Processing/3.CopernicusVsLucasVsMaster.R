@@ -14,7 +14,7 @@ library(ggplot2)
 library(reshape)
 library(openxlsx)
 
-setwd("D:/Google Drive/LUCAS Copernicus/EarthEngine")
+setwd("D:/Google Drive/LUCAS Copernicus/EarthEngine/Processing")
 # --------------------------------------------------------------------------------------------
 # Input 3. estimates from Earth Engines (Copernicus)
 cop <- read.xlsx("Italy_2018-06-30_2.xlsx")

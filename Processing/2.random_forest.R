@@ -13,7 +13,7 @@ library(ranger)
 library(randomForest)
 
 # setwd("C:/Users/UTENTE/Google Drive laptop/LUCAS Copernicus/EarthEngine")
-setwd("D:/Google Drive/LUCAS Copernicus/EarthEngine")
+setwd("D:/Google Drive/LUCAS Copernicus/EarthEngine/Processing")
 #------------------------------------------------------------------------------
 # Input: 1. LUCAS survey data of a given year / country augmented with EE data 
 data <- read.csv("data_Italy_sample_2018.csv")

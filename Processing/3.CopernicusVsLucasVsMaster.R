@@ -17,7 +17,7 @@ library(openxlsx)
 setwd("D:/Google Drive/LUCAS Copernicus/EarthEngine/Processing")
 # --------------------------------------------------------------------------------------------
 # Input 3. estimates from Earth Engines (Copernicus)
-cop <- read.xlsx("Italy_2018-06-30_2.xlsx")
+cop <- read.xlsx("Italy_2022-12-31_6.xlsx")
 lc_values <- c('water', 'trees', 'grass', 'flooded_vegetation', 'crops',
                   'shrub_and_scrub', 'built', 'bare', 'snow_and_ice')
 # colnames(cop)[1:9] <- lc_values
@@ -55,7 +55,7 @@ t
 
 ## --------------------------------------------------------------------------------------------
 # Input 1. LUCAS survey data of a given year / country with land cover predicted values 
-s <- read.csv("Italy_sample_2018_preds.csv")
+s <- read.csv("D:/Google Drive/LUCAS Copernicus/EarthEngine/Download/Italy_sample_2018_preds.csv")
 s$land_cover <- as.factor(s$predicted_LC)
 levels(s$land_cover) <- c("A-Artificial","B-Cropland","C-Woodland",
                           "D-Shrubland","E-Grassland","F-Bareland",

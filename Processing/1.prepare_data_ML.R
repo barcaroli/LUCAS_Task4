@@ -5,7 +5,7 @@
 # Input: 1. dataset obtained by Google Earth Engine for a given year / country
 #        2. master dataset (processed by Ballin) for a given country 
 #        3. LUCAS survey data of a given year / country
-# Output: 1. master dataset for a given country augmented with EE data
+# Output: 1. master dataset for a given country augmented with Ballin and EE data
 #         2. LUCAS survey data of a given year / country augmented with EE data 
 #------------------------------------------------------------------------------
 library(data.table)
@@ -27,7 +27,7 @@ inp$IRECI <- (inp$B7-inp$B4) / (inp$B5/inp$B6)
 
 #---------------------------------------------------------
 # Input 2. master dataset (processed by Ballin) for a given country
-load("Master_HRL_CLC_NUTS21_N2K_DEH_BCK_DEM_EXP.Rdata")
+load("D:\\Google Drive\\LUCAS Copernicus\\EarthEngine\\data\\Master_HRL_CLC_NUTS21_N2K_DEH_BCK_DEM_EXP.Rdata")
 master <- Master_HRL_CLC_NUTS21_N2K_DEH_BCK_DEM_EXP
 classifica_aspect <- function(val) {
   if (is.na(val)) return("flat")
@@ -69,8 +69,8 @@ out <- merge(inp,
 write.table(out,"data_Italy_master_2018.csv",sep=",",quote=F,row.names=F)
 #---------------------------------------------------------
 # Input 3. LUCAS survey data of a given year / country
-s2018 <- fread("Survey_2018_cal_wgt.txt")
-s <- s2018[,c("POINT_ID","land_cover")]
+s2018 <- fread("D:\\Google Drive\\LUCAS Copernicus\\EarthEngine\\data\\Survey_2018_cal_wgt.txt")
+s <- s2018[,c("POINT_ID","land_cover","cal_wgt")]
 s$target <- substr(s$land_cover,1,1)
 s$land_cover <- NULL
 #---------------------------------------------------------

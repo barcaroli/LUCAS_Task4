@@ -1,43 +1,35 @@
-#------------------------------------------------------------------------------
-# 3.CopernicusVsLucasVsMaster.R
-#
-# Script to compare estimates from Earth Engine, LUCAS and Master (predicted values)
-# Input: 1. LUCAS survey data of a given year / country with land cover predicted values 
-#        2. master dataset (processed by Ballin) for a given country with land cover predicted values
-#        3. estimates from Earth Engines (Copernicus)
-# Output: 1. excel dataset with estimates
-#         2. plots
-#------------------------------------------------------------------------------
 # devtools::install_github("DiegoZardetto/ReGenesees")
 library(ReGenesees)
 library(ggplot2)
 library(reshape)
 library(openxlsx)
 
-setwd("D:/Google Drive/LUCAS Copernicus/EarthEngine/Processing")
-# --------------------------------------------------------------------------------------------
-# Input 3. estimates from Earth Engines (Copernicus)
-cop <- read.xlsx("Italy_2022-12-31_6.xlsx")
+## --------------------------------------------------------------------------------------------
+# cop <- read.xlsx("Italy_Lazio.xlsx")
+cop <- read.xlsx("Italy_2018-10-31.xlsx")
 lc_values <- c('water', 'trees', 'grass', 'flooded_vegetation', 'crops',
                   'shrub_and_scrub', 'built', 'bare', 'snow_and_ice')
-# colnames(cop)[1:9] <- lc_values
-colnames(cop)[2:10] <- lc_values
-cop_country <- colSums(cop[,c(2:10)])
+# colnames(cop)[2:10] <- lc_values
+colnames(cop)[1:9] <- lc_values
+cop
+
+cop_italy <- colSums(cop[,c(1:9)])
+
 copern <- NULL
 copern$land_cover_cop <- lc_values
 # copern$counts <- as.numeric(cop18[,c(2:10)])
-copern$counts <- cop_country
+copern$counts <- cop_italy
 copern$freq <- round(copern$counts / sum(copern$counts),4)
 copern <- as.data.frame(copern)
 copern
+# copern2 <- copern[c(7,5,2,6,3,8,1,4),]
 copern2 <- copern[c(7,5,2,6,3,8,1,4),]
 copern2
 sum(copern2$counts)/10000
 
-# --------------------------------------------------------------------------------------------
-# Input 2. master dataset (processed by Ballin) for a given country with land cover predicted values
-m <- read.csv("Italy_master_2018_preds.csv")
-m$land_cover <- as.factor(m$predicted_LC)
+load("master_points.RData")
+m <- master_points
+m$land_cover <- as.factor(m$LC1_predicted)
 levels(m$land_cover) <- c("A-Artificial","B-Cropland","C-Woodland",
                           "D-Shrubland","E-Grassland","F-Bareland",
                           "G-Water","H-Wetlands")
@@ -53,28 +45,27 @@ colnames(t) <- c("LUCAS_landcover","Master_counts")
 #                           "G-Water","H-Wetlands")
 t
 
+
+
 ## --------------------------------------------------------------------------------------------
-# Input 1. LUCAS survey data of a given year / country with land cover predicted values 
-s <- read.csv("D:/Google Drive/LUCAS Copernicus/EarthEngine/Download/Italy_sample_2018_preds.csv")
-s$land_cover <- as.factor(s$predicted_LC)
-levels(s$land_cover) <- c("A-Artificial","B-Cropland","C-Woodland",
-                          "D-Shrubland","E-Grassland","F-Bareland",
-                          "G-Water","H-Wetlands")
+load("sample_points.RData")
 lucas <- read.delim("Survey_2018_cal_wgt.txt")
-lucas$LC1 <- as.factor(substr(lucas$land_cover,1,1))
-lucas$land_cover <- NULL
 lucas$STRATUM_LABEL <- as.factor(lucas$STRATUM_LABEL)
-lucas <- merge(lucas,s[,c("POINT_ID","land_cover")],by="POINT_ID")
-xtabs(~LC1+land_cover,data=lucas)
+lucas <- merge(lucas,sample_points[,c("POINT_ID","LC1_predicted")],by="POINT_ID")
+lucas$LC1 <- as.factor(substr(lucas$land_cover,1,1))
+lucas$LC <- as.factor(substr(lucas$land_cover,1,1))
+xtabs(~LC1+LC1_predicted,data=lucas)
+
 des <- e.svydesign(lucas, ids = ~ POINT_ID, strata = ~ STRATUM_LABEL, 
                    weights = ~ cal_wgt, check.data = TRUE)
 ls <- find.lon.strata(des)
 if (!is.null(ls)) des <- collapse.strata(des)
-summary(lucas$land_cover)
+
+summary(lucas$LC1_predicted)
 ## --------------------------------------------------------------------------------------------
 est1 <- svystatTM(des, y = ~ LC1,estimator="Mean",
                  conf.int=TRUE,na.rm=TRUE)
-est2 <- svystatTM(des, y = ~ land_cover,estimator="Mean",
+est2 <- svystatTM(des, y = ~ LC1_predicted,estimator="Mean",
                  conf.int=TRUE,na.rm=TRUE)
 ReGenesees:::PlotCI(est2, ty = "o", pch = 19, lty = 2)
 
@@ -88,6 +79,8 @@ colnames(est1)[c(3:4)] <- c("CI.l","CI.u")
 colnames(est2)[c(3:4)] <- c("CI.l","CI.u")
 est1
 est2
+
+
 ## --------------------------------------------------------------------------------------------
 estimates <- as.data.frame(list(LUCAS_landcover=c("A-Artificial","B-Cropland","C-Woodland",
               "D-Shrubland","E-Grassland","F-Bareland",
@@ -269,5 +262,5 @@ legend("topright",
 # ripristino i par originali
 par(old.par)
 
-write.csv(estimates,"estimates.csv",row.names=F)
+write.csv(estimates,file,row.names=F)
 

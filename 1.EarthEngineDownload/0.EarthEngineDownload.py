@@ -1,14 +1,21 @@
 # -------------------------------------------------------
-# 0.EarthEngineDownload.py
-# Script to download Earth ENgine values
+# Script to download Earth Engine values
 # -------------------------------------------------------
-# Execute the first time:
-# !pip install os
-# !pip install ee
-# !pip install pandas
-# !pip install tqdm
-# !pip install time
-# -----------------------
+#----------------------------------------
+# To run in RStudio, execute first these in R console:
+# library(reticulate)
+# use_python("C:/PythonEnv/my_env/Scripts/python.exe", required = TRUE)
+# py_config()
+#----------------------------------------
+
+#!pip install os
+#!pip install ee
+#!pip uninstall earthengine-api blessings
+#!pip install earthengine-api --no-deps
+#!pip install google-api-python-client google-auth httplib2
+#!pip install pandas
+#!pip install tqdm
+#!pip install time
 import os
 import ee
 import pandas as pd
@@ -21,22 +28,22 @@ import time
 
 # (1) Cartella di lavoro:
 #os.chdir("D:\\Google Drive\\LUCAS Copernicus\\EarthEngine\\Values")
-os.chdir("D:\\Google Drive laptop\\LUCAS Copernicus\\EarthEngine\\EarthEngineDownload\\")
+os.chdir("C:\\Users\\HP\\Documents\\LUCAS Copernicus\\EarthEngine\\EarthEngineDownload")
 
 # (2) Autenticazione e inizializzazione di Earth Engine
 ee.Authenticate(auth_mode='localhost')
 ee.Initialize(project='landcovercopernicus')
 
 # (3) Definisci il periodo di interesse (modifica se necessario)
-start_date = '2022-04-01'
-end_date   = '2022-07-31'
+start_date = '2021-04-01'
+end_date   = '2021-07-31'
 
 # (4) Per Sentinel-1: pass di orbita ('ASCENDING' o 'DESCENDING'; stringa vuota = entrambe)
 orbit_pass = 'ASCENDING'
 
 # (5) Parametri di batching e output
 batch_size = 1000
-output_csv = 'S2_S1_GLCM_Italy_2022_prova.csv'
+output_csv = 'S2_S1_GLCM_Italy_2021.csv'
 
 # (6) Bande Sentinel-2 che vogliamo (SR Harmonized)
 bands_s2 = ['B1','B2','B3','B4','B5','B6','B7','B8','B8A','B9','B11','B12']
@@ -54,7 +61,7 @@ glcm_window = 3
 
 # Attendi di avere un CSV con almeno colonne: POINT_ID, longitude, latitude
 #df = pd.read_csv("italy_master_points.csv")
-n = 75000  # numero di record da skippare
+n = 1  # numero di record da skippare
 df = pd.read_csv(
     "italy_master_points.csv",
     skiprows=range(1, n+1)   # salta le righe 1,2,…,n (la riga 0 è l’header)

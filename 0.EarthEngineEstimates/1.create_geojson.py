@@ -6,7 +6,7 @@ First, download the json file from https://gadm.org/download_country.html
 @author: Giulio
 """
 import os
-os.chdir("D:\\Google Drive\\LUCAS Copernicus\\DynamicWorld\\")
+os.chdir("C:\\Users\\UTENTE\\Google Drive laptop\\LUCAS Copernicus\\EarthEngine\\EarthEngineEstimates")
 import geopandas as gpd
 file_path = 'Italy/italy_gadm.json'  # Replace with your file path
 italy = gpd.read_file(file_path)

@@ -7,7 +7,6 @@
 # use_python("C:/PythonEnv/my_env/Scripts/python.exe", required = TRUE)
 # py_config()
 #----------------------------------------
-
 #!pip install os
 #!pip install ee
 #!pip uninstall earthengine-api blessings
@@ -28,7 +27,7 @@ from functools import reduce
 # -------------------------------------------------------
 # 1. INITIAL SETTINGS
 # -------------------------------------------------------
-os.chdir("D:\\Google Drive\\LUCAS Copernicus\\EarthEngine\\2.EarthEngineTrajectories\\")
+os.chdir("D:\\Google Drive\\LUCAS Copernicus\\EarthEngine\\data\\")
 ee.Authenticate(auth_mode='localhost')
 ee.Initialize(project='landcovercopernicus')
 

@@ -10,14 +10,11 @@
 #------------------------------------------------------------------------------
 library(caret)
 # library(ranger)
-library(randomForest)
-
-
-setwd("D:/Google Drive/LUCAS Copernicus/EarthEngine/3.MachineLearning")
+datapath <- "D:\\Google Drive\\LUCAS Copernicus\\EarthEngine\\data\\"
 #------------------------------------------------------------------------------
 # Input: 1. LUCAS survey data of a given year / country augmented with EE data 
-data <- read.csv("Italy_sample_2018.csv")
-data$target <- as.factor(ifelse(data$LC1 == "H",1,0))
+data <- read.csv(paste0(datapath,"Italy_sample_2018.csv"))
+data$target <- as.factor(ifelse(data$LC1 == "F",1,0))
 table(data$target,useNA="ifany")
 data$LC1 <- NULL
 
@@ -44,17 +41,18 @@ train_data$POINT_ID <- NULL
 test_data$POINT_ID <- NULL
 
 
+
 # Random Forest
 set.seed(1234)
-rf_model <- randomForest(target ~ ., 
+rf_model_F <- randomForest(target ~ ., 
                          data=train_data, 
-                         # classwt = c("0" = 1, "1" = 100),
                          importance=TRUE,
                          mtry=15,
                          nodesize=5,
-                         ntree=100,
+                         ntree=500,
                          do.trace=TRUE)
-save(rf_model,file="rf_model_H.RData")
+save(rf_model_F,file=paste0(datapath,"rf_model_F.RData"))
+rf_model <- rf_model_F
 plot(rf_model)
 imp_df <- as.data.frame(rf_model$importance)
 # imp_df <- importance(rf_model)
@@ -65,7 +63,7 @@ imp_df[order(imp_df$MeanDecreaseGini, decreasing = TRUE), c("Variable", "MeanDec
 
 probs <- predict(rf_model, newdata=test_data, type = "prob")[, "1"]
 hist(probs)
-rf_predictions <- as.factor(ifelse(probs > 0.14, 1, 0))  # abbassa la soglia
+rf_predictions <- as.factor(ifelse(probs > 0.13, 1, 0))  # abbassa la soglia
 # rf_predictions <- predict(rf_model,test_data)
 # Evaluate models on test data
 cm <- confusionMatrix(rf_predictions, test_data$target)

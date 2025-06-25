@@ -1,9 +1,8 @@
 # install.packages("tidyverse")  # se non lo hai già
 library(tidyverse)
-
+datapath <- "D:\\Google Drive\\LUCAS Copernicus\\EarthEngine\\data\\"
 # 1. Carica il dataset
-df <- read.csv("S2_S1_Italy_2018_trajectories_sample.csv", 
-               stringsAsFactors = FALSE)
+df <- read.csv(paste0(datapath,"S2_S1_Italy_2018_trajectories_sample.csv"),stringsAsFactors = FALSE)
 
 # 2. Prepara i dati per il plot NDVI
 df_ndvi <- df %>%
@@ -93,4 +92,4 @@ print(p_vh)
 vh <- p_vh$data
 
 trajectories <- cbind(ndvi,vv$mean_vv,vh$mean_vh)
-write.table(trajectories,"trajectories_2018.csv",sep=",",quote=F,row.names=F)
+write.table(trajectories,paste0(datapath,"trajectories_2018.csv"),sep=",",quote=F,row.names=F)

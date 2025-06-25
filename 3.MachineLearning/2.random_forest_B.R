@@ -11,13 +11,11 @@
 library(caret)
 # library(ranger)
 library(randomForest)
-
-setwd("D:/Google Drive/LUCAS Copernicus/EarthEngine/3.MachineLearning")
+datapath <- "D:\\Google Drive\\LUCAS Copernicus\\EarthEngine\\data\\"
 #------------------------------------------------------------------------------
 # Input: 1. LUCAS survey data of a given year / country augmented with EE data 
-data <- read.csv("Italy_sample_2018.csv")
-data <- data[data$LC1 %in% c("A","B","C","E"),]
-data$target <- factor(data$LC1)
+data <- read.csv(paste0(datapath,"Italy_sample_2018.csv"))
+data$target <- as.factor(ifelse(data$LC1 == "A",1,0))
 table(data$target,useNA="ifany")
 data$LC1 <- NULL
 
@@ -29,25 +27,32 @@ preProc_vals <- preProcess(
 # 2.2 Applica l’imputazione sia su train che su test
 data <- predict(preProc_vals, data)
 
+# all_feats <- c(paste0("JM_NDVI_",LETTERS[1:8]),
+#                paste0("JM_VV_",LETTERS[1:8]),
+#                paste0("JM_VH_",LETTERS[1:8]))
+
+# data <- data[,c("target",all_feats)]
+
 # Splitting the data
-set.seed(42)
-training_rows <- createDataPartition(data$target, p = 0.7, list = FALSE)
+set.seed(1234)
+training_rows <- createDataPartition(data$target, p = 0.8, list = FALSE)
 train_data <- data[training_rows, ]
 test_data <- data[-training_rows, ]
 train_data$POINT_ID <- NULL
 test_data$POINT_ID <- NULL
-target <- train_data$target
+
 
 # Random Forest
 set.seed(1234)
-rf_model <- randomForest(target ~ ., 
+rf_model_B <- randomForest(target ~ ., 
                          data=train_data, 
                          importance=TRUE,
                          mtry=15,
                          nodesize=5,
                          ntree=500,
                          do.trace=TRUE)
-save(rf_model,file="rf_model_ABCE.RData")
+save(rf_model_B,file=paste0(datapath,"rf_model_B.RData"))
+rf_model <- rf_model_B
 plot(rf_model)
 imp_df <- as.data.frame(rf_model$importance)
 # imp_df <- importance(rf_model)
@@ -56,8 +61,10 @@ imp_df <- as.data.frame(rf_model$importance)
 imp_df$Variable <- row.names(imp_df)
 imp_df[order(imp_df$MeanDecreaseGini, decreasing = TRUE), c("Variable", "MeanDecreaseGini")]
 
-
-rf_predictions <- predict(rf_model,test_data)
+probs <- predict(rf_model, newdata=test_data, type = "prob")[, "1"]
+hist(probs)
+rf_predictions <- as.factor(ifelse(probs > 0.33, 1, 0))  # abbassa la soglia
+# rf_predictions <- predict(rf_model,test_data)
 # Evaluate models on test data
 cm <- confusionMatrix(rf_predictions, test_data$target)
 cm
@@ -70,40 +77,40 @@ t
 # t <- addmargins(cm$table)
 # t 
 # Plot
-categorie <- names(t[5,])[1:4]
-marg_riga <- as.numeric(t[5, 1:4])
-marg_col <- as.numeric(t[1:4, 5])
-marginals_mat <- cbind(Riga = marg_riga, Colonna = marg_col)
-rownames(marginals_mat) <- categorie
-barplot(
-  t(marginals_mat), 
-  beside = TRUE, 
-  col = c("skyblue", "orange"),
-  legend.text = c("Reference", "Prediction"),
-  args.legend = list(x = "topright"),
-  main = "RandomForest",
-  ylab = "Frequency",
-  names.arg = categorie
-)
-# Compute correction factors
+# categorie <- names(t[9,])[1:8]
+# marg_riga <- as.numeric(t[9, 1:8])
+# marg_col <- as.numeric(t[1:8, 9])
+# marginals_mat <- cbind(Riga = marg_riga, Colonna = marg_col)
+# rownames(marginals_mat) <- categorie
+# barplot(
+#   t(marginals_mat), 
+#   beside = TRUE, 
+#   col = c("skyblue", "orange"),
+#   legend.text = c("Reference", "Prediction"),
+#   args.legend = list(x = "topright"),
+#   main = "RandomForest",
+#   ylab = "Frequency",
+#   names.arg = categorie
+# )
+# # Compute correction factors
 # correction_factors <- as.data.frame(marginals_mat[,1] /  marginals_mat[,2])
 # correction_factors$LC1 <- LETTERS[1:8]
 # colnames(correction_factors)[1] <- "correction"
 # correction_factors
-# write.table(correction_factors,"correction_factors_ABCE.csv",sep=",",quote=F,row.names = F)
+# write.table(correction_factors,"correction_factors.csv",sep=",",quote=F,row.names = F)
 
 #------------------------------------------------------------------------------
 # Output: 1. LUCAS survey data of a given year / country with predicted land cover 
 # write.table(data,"Italy_sample_2018_preds.csv",sep=",",quote=F,row.names=F)
-# 
-# # Prediction on whole master
-# #------------------------------------------------------------------------------
-# # Input 2. master dataset (processed by Ballin) for a given country augmented with EE data
+
+# Prediction on whole master
+#------------------------------------------------------------------------------
+# Input 2. master dataset (processed by Ballin) for a given country augmented with EE data
 # data2 <- read.csv("data_Italy_master_2018.csv")
 # summary(data2)
 # data2$predicted_LC <- predict(rf_model,data2)
-# #------------------------------------------------------------------------------
-# # Output 2. master dataset (processed by Ballin) for a given country with predicted land cover
+#------------------------------------------------------------------------------
+# Output 2. master dataset (processed by Ballin) for a given country with predicted land cover
 # write.table(data2,"Italy_master_2018_preds.csv",sep=",",quote=F,row.names=F)
 
 # CODE TO BE USED FOR 2022 MASTER

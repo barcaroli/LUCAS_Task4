@@ -4,8 +4,8 @@
 # names(c)
 # names(c)[order(names(c))]
 # write.table(c,"S2_S1_Italy_2018_Monthly_complete.csv",quote=F,sep=",",row.names=F)
-setwd("D:/Google Drive/LUCAS Copernicus/EarthEngine/2.EarthEngineTrajectories")
-c <- read.csv("S2_S1_Italy_2022_Monthly.csv")
+datapath <- "D:\\Google Drive\\LUCAS Copernicus\\EarthEngine\\data\\"
+c <- read.csv(paste0(datapath,"S2_S1_Italy_2022_Monthly.csv"))
 
 c$NDVI_01 <- (c$B8_01 - c$B4_01) / (c$B8_01 + c$B4_01)
 c$NDVI_02 <- (c$B8_02 - c$B4_02) / (c$B8_02 + c$B4_02)
@@ -21,10 +21,10 @@ c$NDVI_11 <- (c$B8_11 - c$B4_11) / (c$B8_11 + c$B4_11)
 c$NDVI_12 <- (c$B8_12 - c$B4_12) / (c$B8_12 + c$B4_12)
 c(grep("VV",names(c)))
 # d <- c[,c(c(grep("POINT_ID",names(c))),c(grep("VV",names(c))),c(grep("VH",names(c))),c(grep("NDVI",names(c))))]
-write.table(c,"S2_S1_Italy_2022_trajectories_master.csv",quote=F,sep=",",row.names=F)
+write.table(c,paste0(datapath,"S2_S1_Italy_2022_trajectories_master.csv"),quote=F,sep=",",row.names=F)
 library(data.table)
-s <- fread("D:/Google Drive/LUCAS Copernicus/EarthEngine/data/Survey_2022_cal_wgt_2nd_phase.txt")
+s <- fread(paste0(datapath,"Survey_2022_cal_wgt_2nd_phase.txt"))
 s$LC1 <- substr(s$SURVEY_LC1,1,1)
 s <- s[,c("POINT_ID","LC1")]
 d <- merge(c,s,by="POINT_ID")
-write.table(d,"S2_S1_Italy_2022_trajectories_sample.csv",quote=F,sep=",",row.names=F)
+write.table(d,paste0(datapath,"S2_S1_Italy_2022_trajectories_sample.csv"),quote=F,sep=",",row.names=F)

@@ -11,12 +11,10 @@
 library(caret)
 # library(ranger)
 library(randomForest)
-
-
-setwd("D:/Google Drive/LUCAS Copernicus/EarthEngine/3.MachineLearning")
+datapath <- "D:\\Google Drive\\LUCAS Copernicus\\EarthEngine\\data\\"
 #------------------------------------------------------------------------------
 # Input: 1. LUCAS survey data of a given year / country augmented with EE data 
-data <- read.csv("Italy_sample_2018.csv")
+data <- read.csv(paste0(datapath,"Italy_sample_2018.csv"))
 data$target <- as.factor(ifelse(data$LC1 == "D",1,0))
 table(data$target,useNA="ifany")
 data$LC1 <- NULL
@@ -46,14 +44,15 @@ test_data$POINT_ID <- NULL
 
 # Random Forest
 set.seed(1234)
-rf_model <- randomForest(target ~ ., 
+rf_model_D <- randomForest(target ~ ., 
                          data=train_data, 
                          importance=TRUE,
                          mtry=15,
                          nodesize=5,
                          ntree=500,
                          do.trace=TRUE)
-save(rf_model,file="rf_model_D.RData")
+save(rf_model_D,file=paste0(datapath,"rf_model_D.RData"))
+rf_model <- rf_model_D
 plot(rf_model)
 imp_df <- as.data.frame(rf_model$importance)
 # imp_df <- importance(rf_model)

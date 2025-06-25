@@ -1,0 +1,23 @@
+# setwd("D:/Google Drive/LUCAS Copernicus/CDSE/Italy")
+setwd("C:/Users/UTENTE/Google Drive laptop/LUCAS Copernicus/EarthEngine/Data")
+library(data.table)
+s2018 <- fread("Survey_2018_cal_wgt.txt")
+s <- s2018[,c("POINT_ID","land_cover")]
+s$LC1 <- substr(s$land_cover,1,1)
+B <- fread("B01_B12_Italy_2018.csv")
+V <- fread("VH_VV_Italy_2018.csv")
+G <- fread("glcm_VH_VV_Italy_2018.csv")
+out <- merge(s[,c("POINT_ID","LC1")],B,by="POINT_ID")
+out <- merge(out,V,by="POINT_ID")
+out <- merge(out,G,by="POINT_ID")
+out$NDVI <- (out$B8-out$B4) / (out$B8+out$B4)
+out$NDWI <- (out$B8-out$B3) / (out$B8+out$B3)
+out$EVI <- (out$B8-out$B4) / 2.5 * (out$B8 + 6*out$B4 - 7.5*out$B2 + 0.5)
+out$SAVI <- (out$B8-out$B4) / (out$B8 + out$B4 + 0.5)
+out$NDI45 <- (out$B5-out$B4) / (out$B5+out$B4)
+out$MCARI <- ((out$B5 - out$B4) - 0.2*(out$B5 - out$B3)) * (out$B5-out$B4)
+out$GNDVI <- (out$B3-out$B4) / (out$B3+out$B4)
+# out$MSAVI <- ?
+out$PSSR <- out$B7 / out$B4
+out$IRECI <- (out$B7-out$B4) / (out$B5/out$B6)
+write.table(out,"data_2018.csv",sep=",",quote=F,row.names=F)

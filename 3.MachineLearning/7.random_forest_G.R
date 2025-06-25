@@ -11,12 +11,12 @@
 library(caret)
 # library(ranger)
 library(randomForest)
-
-setwd("D:/Google Drive/LUCAS Copernicus/EarthEngine/3.MachineLearning")
+datapath <- "D:\\Google Drive\\LUCAS Copernicus\\EarthEngine\\data\\"
 #------------------------------------------------------------------------------
 # Input: 1. LUCAS survey data of a given year / country augmented with EE data 
-data <- read.csv("Italy_sample_2018.csv")
-data$target <- as.factor(data$LC1)
+data <- read.csv(paste0(datapath,"Italy_sample_2018.csv"))
+data$target <- as.factor(ifelse(data$LC1 == "G",1,0))
+table(data$target,useNA="ifany")
 data$LC1 <- NULL
 
 preProc_vals <- preProcess(
@@ -27,8 +27,6 @@ preProc_vals <- preProcess(
 # 2.2 Applica l’imputazione sia su train che su test
 data <- predict(preProc_vals, data)
 
-
-
 # all_feats <- c(paste0("JM_NDVI_",LETTERS[1:8]),
 #                paste0("JM_VV_",LETTERS[1:8]),
 #                paste0("JM_VH_",LETTERS[1:8]))
@@ -36,61 +34,27 @@ data <- predict(preProc_vals, data)
 # data <- data[,c("target",all_feats)]
 
 # Splitting the data
-set.seed(42)
-training_rows <- createDataPartition(data$target, p = 0.7, list = FALSE)
+set.seed(1234)
+training_rows <- createDataPartition(data$target, p = 0.8, list = FALSE)
 train_data <- data[training_rows, ]
 test_data <- data[-training_rows, ]
 train_data$POINT_ID <- NULL
 test_data$POINT_ID <- NULL
-# target <- train_data$target
 
-# Prepare for hyperparameters tuning
-# ctrl <- trainControl(
-#   method            = "repeatedcv",    # 5‐fold CV
-#   number            = 5,               # 5 partizioni
-#   repeats           = 1,               # ripetiamo 2 volte per stabilizzare
-#   classProbs        = FALSE,           # non servono probabilità per multi‐classe
-#   summaryFunction   = defaultSummary,  # default restituisce Accuracy e Kappa
-#   savePredictions   = "final",         # per poter analizzare i risultati later
-#   verboseIter       = TRUE            # se TRUE stampa progresso su console
-# )
-# p <- ncol(train_data) - 1  # tolgo la colonna target
-# p
-# grid_ranger <- expand.grid(
-#   mtry            = seq(5, min(p, 30), by = 5),  # p non deve essere troppo piccolo
-#   splitrule       = "gini",                       # per multi‐classe si usa Gini
-#   min.node.size   = c(1, 5, 10)
-# )
-# grid_ranger
-# # Hyperparameters tuning
-# set.seed(123)  
-# rf_tuned_multi <- train(
-#   target ~ .,
-#   data      = train_data,
-#   method    = "ranger",
-#   tuneGrid  = grid_ranger,
-#   trControl = ctrl,
-#   metric    = "Accuracy",
-#   num.trees = 100
-# )
-# class(rf_tuned_multi)
-# head(rf_tuned_multi$results)
-# rf_tuned_multi$bestTune
-# plot(rf_tuned_multi)
-# rf_final_multi <- rf_tuned_multi$finalModel
-# rf_final_multi
+
 
 # Random Forest
-library(randomForest)
 set.seed(1234)
-rf_model <- randomForest(target ~ ., 
+rf_model_G <- randomForest(target ~ ., 
                          data=train_data, 
+                         # classwt = c("0" = 1, "1" = 100),
                          importance=TRUE,
                          mtry=15,
                          nodesize=5,
                          ntree=500,
                          do.trace=TRUE)
-save(rf_model,file="rf_model.RData")
+save(rf_model_G,file=paste0(datapath,"rf_model_G.RData"))
+rf_model <- rf_model_G
 plot(rf_model)
 imp_df <- as.data.frame(rf_model$importance)
 # imp_df <- importance(rf_model)
@@ -99,8 +63,10 @@ imp_df <- as.data.frame(rf_model$importance)
 imp_df$Variable <- row.names(imp_df)
 imp_df[order(imp_df$MeanDecreaseGini, decreasing = TRUE), c("Variable", "MeanDecreaseGini")]
 
-
-rf_predictions <- predict(rf_model,test_data)
+probs <- predict(rf_model, newdata=test_data, type = "prob")[, "1"]
+hist(probs)
+rf_predictions <- as.factor(ifelse(probs > 0.16, 1, 0))  # abbassa la soglia
+# rf_predictions <- predict(rf_model,test_data)
 # Evaluate models on test data
 cm <- confusionMatrix(rf_predictions, test_data$target)
 cm
@@ -113,22 +79,22 @@ t
 # t <- addmargins(cm$table)
 # t 
 # Plot
-categorie <- names(t[9,])[1:8]
-marg_riga <- as.numeric(t[9, 1:8])
-marg_col <- as.numeric(t[1:8, 9])
-marginals_mat <- cbind(Riga = marg_riga, Colonna = marg_col)
-rownames(marginals_mat) <- categorie
-barplot(
-  t(marginals_mat), 
-  beside = TRUE, 
-  col = c("skyblue", "orange"),
-  legend.text = c("Reference", "Prediction"),
-  args.legend = list(x = "topright"),
-  main = "RandomForest",
-  ylab = "Frequency",
-  names.arg = categorie
-)
-# Compute correction factors
+# categorie <- names(t[9,])[1:8]
+# marg_riga <- as.numeric(t[9, 1:8])
+# marg_col <- as.numeric(t[1:8, 9])
+# marginals_mat <- cbind(Riga = marg_riga, Colonna = marg_col)
+# rownames(marginals_mat) <- categorie
+# barplot(
+#   t(marginals_mat), 
+#   beside = TRUE, 
+#   col = c("skyblue", "orange"),
+#   legend.text = c("Reference", "Prediction"),
+#   args.legend = list(x = "topright"),
+#   main = "RandomForest",
+#   ylab = "Frequency",
+#   names.arg = categorie
+# )
+# # Compute correction factors
 # correction_factors <- as.data.frame(marginals_mat[,1] /  marginals_mat[,2])
 # correction_factors$LC1 <- LETTERS[1:8]
 # colnames(correction_factors)[1] <- "correction"
@@ -145,8 +111,8 @@ barplot(
 # data2 <- read.csv("data_Italy_master_2018.csv")
 # summary(data2)
 # data2$predicted_LC <- predict(rf_model,data2)
-# #------------------------------------------------------------------------------
-# # Output 2. master dataset (processed by Ballin) for a given country with predicted land cover
+#------------------------------------------------------------------------------
+# Output 2. master dataset (processed by Ballin) for a given country with predicted land cover
 # write.table(data2,"Italy_master_2018_preds.csv",sep=",",quote=F,row.names=F)
 
 # CODE TO BE USED FOR 2022 MASTER

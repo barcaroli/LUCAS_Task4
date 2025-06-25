@@ -28,7 +28,7 @@ import time
 
 # (1) Cartella di lavoro:
 #os.chdir("D:\\Google Drive\\LUCAS Copernicus\\EarthEngine\\Values")
-os.chdir("C:\\Users\\HP\\Documents\\LUCAS Copernicus\\EarthEngine\\EarthEngineDownload")
+os.chdir("C:\\Users\\HP\\Documents\\LUCAS Copernicus\\EarthEngine\\Data")
 
 # (2) Autenticazione e inizializzazione di Earth Engine
 ee.Authenticate(auth_mode='localhost')

@@ -34,7 +34,7 @@ m$IRECI[is.infinite(m$IRECI)] <- median(m$IRECI)
 
 # Predict H
 probs <- predict(rf_model_H, newdata=m, type = "prob")[, "1"]
-m$LC_predicted <- as.factor(ifelse(probs > 0.14, 1, 0))  
+m$LC_predicted <- as.factor(ifelse(probs > 0.1, 1, 0))  
 table(m$LC_predicted,useNA = "ifany")
 m_H <- m[m$LC_predicted==1,]
 m_H$LC_predicted <- "H"
@@ -50,7 +50,7 @@ m_G$LC_predicted <- "G"
 # Predict F
 m <- m[!m$POINT_ID %in% m_G$POINT_ID,]
 probs <- predict(rf_model_F, newdata=m, type = "prob")[, "1"]
-m$LC_predicted <- as.factor(ifelse(probs > 0.13, 1, 0))  
+m$LC_predicted <- as.factor(ifelse(probs > 0.12, 1, 0))  
 table(m$LC_predicted,useNA = "ifany")
 m_F <- m[m$LC_predicted==1,]
 m_F$LC_predicted <- "F"
@@ -74,7 +74,7 @@ m_A$LC_predicted <- "A"
 # Predict E
 m <- m[!m$POINT_ID %in% m_A$POINT_ID,]
 probs <- predict(rf_model_E, newdata=m, type = "prob")[, "1"]
-m$LC_predicted <- as.factor(ifelse(probs > 0.33, 1, 0)) 
+m$LC_predicted <- as.factor(ifelse(probs > 0.335, 1, 0)) 
 table(m$LC_predicted,useNA = "ifany")
 m_E <- m[m$LC_predicted==1,]
 m_E$LC_predicted <- "E"
@@ -82,7 +82,7 @@ m_E$LC_predicted <- "E"
 # Predict B
 m <- m[!m$POINT_ID %in% m_E$POINT_ID,]
 probs <- predict(rf_model_B, newdata=m, type = "prob")[, "1"]
-m$LC_predicted <- as.factor(ifelse(probs > 0.41, 1, 0)) 
+m$LC_predicted <- as.factor(ifelse(probs > 0.33, 1, 0)) 
 table(m$LC_predicted,useNA = "ifany")
 m_B <- m[m$LC_predicted==1,]
 m_B$LC_predicted <- "B"
@@ -90,7 +90,7 @@ m_B$LC_predicted <- "B"
 # Predict C
 m <- m[!m$POINT_ID %in% m_B$POINT_ID,]
 probs <- predict(rf_model_C, newdata=m, type = "prob")[, "1"]
-m$LC_predicted <- as.factor(ifelse(probs > 0.46, 1, 0)) 
+m$LC_predicted <- as.factor(ifelse(probs > 0.45, 1, 0)) 
 table(m$LC_predicted,useNA = "ifany")
 m_C <- m[m$LC_predicted==1,]
 m_C$LC_predicted <- "C"

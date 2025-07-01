@@ -5,15 +5,15 @@ setwd("D:/Google Drive/LUCAS Copernicus/EarthEngine/4.Predictions")
 #-------------------------------------------------------------------------------------
 datapath <- "D:\\Google Drive\\LUCAS Copernicus\\EarthEngine\\data\\"
 # Load models
-load(paste0(datapath,"rf_model_A1.RData"))
-load(paste0(datapath,"rf_model_A2.RData"))
-load(paste0(datapath,"rf_model_A3.RData"))
+load(paste0(datapath,"rf_model_C1.RData"))
+load(paste0(datapath,"rf_model_C2.RData"))
+load(paste0(datapath,"rf_model_C3.RData"))
 #-------------------------------------------------------------------------------------
 # Read master
 m <- fread(paste0(datapath,"Italy_master_2018_with_LC1_predictions.csv"))
 m <- m[,-c("probs_A","probs_B","probs_C","probs_D","probs_E","probs_F","probs_G","probs_H")]
 table(m$LC_predicted)
-m <- m[m$LC_predicted == "A",]
+m <- m[m$LC_predicted == "C",]
 m$LC_predicted <- factor(m$LC_predicted)
 summary(m)
 # Impute missing values
@@ -31,23 +31,23 @@ m <- predict(preProc_vals, m)
 # m$PSSR[is.infinite(m$PSSR)] <- median(m$PSSR)
 # m$IRECI[is.infinite(m$IRECI)] <- median(m$IRECI)
 
-# Predict A1
-m$probs_A1 <- predict(rf_model_A1, newdata=m, type = "prob")[, "1"]
-mean(m$probs_A)
+# Predict C1
+m$probs_C1 <- predict(rf_model_C1, newdata=m, type = "prob")[, "1"]
+mean(m$probs_C1)
 
-# Predict A2
-m$probs_A2 <- predict(rf_model_A2, newdata=m, type = "prob")[, "1"]
-mean(m$probs_A2)
+# Predict C2
+m$probs_C2 <- predict(rf_model_C2, newdata=m, type = "prob")[, "1"]
+mean(m$probs_C2)
 
-# Predict A3
-m$probs_A3 <- predict(rf_model_A3, newdata=m, type = "prob")[, "1"]
-mean(m$probs_A3)
+# Predict C3
+m$probs_C3 <- predict(rf_model_C3, newdata=m, type = "prob")[, "1"]
+mean(m$probs_C3)
 
 s <- fread(paste0(datapath,"Survey_2018_cal_wgt.txt"))
 s <- s[s$NUTS0_16 == "IT",]
-s <- s[substr(s$land_cover,1,1) == "A",]
+s <- s[substr(s$land_cover,1,1) == "C",]
 s$LC2 <- as.factor(substr(s$land_cover,1,2))
-s <- merge(m[,c("POINT_ID",c("probs_A1","probs_A2","probs_A3"))],
+s <- merge(m[,c("POINT_ID",c("probs_C1","probs_C2","probs_C3"))],
            s[,c("POINT_ID","LC2")],by="POINT_ID")
 s$LC2 <- as.factor(s$LC2)
 s$POINT_ID <- s$LC1 <- NULL
@@ -56,8 +56,6 @@ set.seed(42)
 training_rows <- createDataPartition(s$LC2, p = 0.75, list = FALSE)
 train_data <- s[training_rows, ]
 test_data <- s[-training_rows, ]
-train_data$POINT_ID <- NULL
-test_data$POINT_ID <- NULL
 
 set.seed(1234)
 rf_model <- randomForest(LC2 ~ ., 
@@ -67,7 +65,7 @@ rf_model <- randomForest(LC2 ~ .,
                          # nodesize=5,
                          ntree=500,
                          do.trace=TRUE)
-save(rf_model,file=paste0(datapath,"ensemble_model_A.RData"))
+save(rf_model,file=paste0(datapath,"ensemble_model_C.RData"))
 rf_predictions <- predict(rf_model,test_data)
 # Evaluate models on test data
 cm <- confusionMatrix(rf_predictions, test_data$LC2)
@@ -107,11 +105,11 @@ t1 <- as.data.frame(round(prop.table(xtabs(~LC_predicted,data=m)),4)*100)
 # t1$Estimates <- t1$Freq * correction_factors$correction
 t1
 
-# write.table(mpred,paste0(datapath,"Italy_master_2018_with_predictions_3.csv"),sep=",",quote=F,row.names=F)
+# write.table(mpred,paste0(datapath,"Italy_master_2018_with_predictions_C.csv"),sep=",",quote=F,row.names=F)
 
 s2 <- fread(paste0(datapath,"Survey_2018_cal_wgt.txt"))
 s2 <- s2[s2$NUTS0_16 == "IT",]
-s2 <- s2[substr(s2$land_cover,1,1) == "A",]
+s2 <- s2[substr(s2$land_cover,1,1) == "C",]
 s2 <- merge(s2,m[,c("POINT_ID","LC_predicted")],by="POINT_ID")
 s2$LC2 <- as.factor(substr(s2$land_cover,1,2))
 t2 <- as.data.frame(round(prop.table(xtabs(cal_wgt~LC_predicted,data=s2)),4)*100)
@@ -132,7 +130,7 @@ barplot(mat,
         beside = TRUE,
         col = c("skyblue", "orange","darkgreen"),
         ylim = c(0, max(mat) + 5),
-        names.arg = c("A1","A2","A3"),
+        names.arg = c("C1","C2","C3"),
         ylab = "Percentage",
         main = "Observed vs predicted 2018")
 
@@ -141,6 +139,6 @@ legend("topright", legend = c("Master Predicted", "Survey Predicted", "Survey Ob
 
 mat <- as.data.frame(mat)
 
-colnames(mat) <-c("A1", "A2", "A3")
+colnames(mat) <-c("C1", "C2", "C3")
 mat$reference <- c("Master Predicted 2018", "Survey Predicted 2018", "Survey Observed 2018")
-write.table(mat,paste0(datapath,"Italy_estimates_predictions_2018_A.csv"),sep=",",quote=F,row.names=F)
+write.table(mat,paste0(datapath,"Italy_estimates_predictions_2018_C.csv"),sep=",",quote=F,row.names=F)

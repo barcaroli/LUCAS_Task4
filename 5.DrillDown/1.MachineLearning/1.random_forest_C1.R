@@ -9,8 +9,8 @@ s <- s[s$NUTS0_16 == "IT",]
 s$LC2 <- as.factor(substr(s$land_cover,1,2))
 data <- read.csv(paste0(datapath,"Italy_sample_2018.csv"))
 data <- merge(data,s[,c("POINT_ID","LC2")],by="POINT_ID")
-data$target <- as.factor(ifelse(data$LC2 == "",1,0))
-data <- data[data$LC1 == "A",]
+data$target <- as.factor(ifelse(data$LC2 == "C1",1,0))
+data <- data[data$LC1 == "C",]
 table(data$target,useNA="ifany")
 data$LC1 <- data$LC2 <- NULL
 
@@ -39,15 +39,15 @@ test_data$POINT_ID <- NULL
 
 # Random Forest
 set.seed(1234)
-rf_model_ <- randomForest(target ~ ., 
+rf_model_C1 <- randomForest(target ~ ., 
                          data=train_data, 
                          importance=TRUE,
                          mtry=15,
                          nodesize=5,
                          ntree=500,
                          do.trace=TRUE)
-save(rf_model_,file=paste0(datapath,"rf_model_.RData"))
-rf_model <- rf_model_
+save(rf_model_C1,file=paste0(datapath,"rf_model_C1.RData"))
+rf_model <- rf_model_C1
 plot(rf_model)
 imp_df <- as.data.frame(rf_model$importance)
 # imp_df <- importance(rf_model)
@@ -56,10 +56,10 @@ imp_df <- as.data.frame(rf_model$importance)
 imp_df$Variable <- row.names(imp_df)
 imp_df[order(imp_df$MeanDecreaseGini, decreasing = TRUE), c("Variable", "MeanDecreaseGini")]
 
-probs <- predict(rf_model, newdata=test_data, type = "prob")[, "1"]
-hist(probs)
-rf_predictions <- as.factor(ifelse(probs > 0.1, 1, 0))  # abbassa la soglia
-# rf_predictions <- predict(rf_model,test_data)
+# probs <- predict(rf_model, newdata=test_data, type = "prob")[, "1"]
+# hist(probs)
+# rf_predictions <- as.factor(ifelse(probs > 0.33, 1, 0))  # abbassa la soglia
+rf_predictions <- predict(rf_model,test_data)
 # Evaluate models on test data
 cm <- confusionMatrix(rf_predictions, test_data$target)
 cm
@@ -109,15 +109,15 @@ t
 # write.table(data2,"Italy_master_2018_preds.csv",sep=",",quote=F,row.names=F)
 
 # CODE TO BE USED FOR 2022 MASTER
-# dat <- read.csv("data_Italy_master_2022.csv")
-# summary(dat)
+# data3 <- read.csv("data_Italy_master_2022.csv")
+# summary(data3)
 # # Ottieni una matrice TRUE/FALSE: TRUE se il valore è NA/NaN/Inf
-# mask_bad <- sapply(dat, function(x) is.na(x) | is.nan(x) | is.infinite(x))
+# mask_bad <- sapply(data3, function(x) is.na(x) | is.nan(x) | is.infinite(x))
 # # Per ogni riga: TRUE se almeno un valore è "cattivo"
 # rows_to_remove <- apply(mask_bad, 1, any)
 # # Tieni solo le righe "buone"
-# dat_clean <- dat[!rows_to_remove, ]
-# summary(dat_clean)
+# data3_clean <- data3[!rows_to_remove, ]
+# summary(data3_clean)
 # data3_clean$predicted_LC <- predict(rf_model,data3_clean) 
 # xtabs(~predicted_LC,data=data3_clean)
 # round(prop.table(xtabs(~predicted_LC,data=data3_clean)),4)

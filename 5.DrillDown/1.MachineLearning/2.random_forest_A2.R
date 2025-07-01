@@ -9,7 +9,7 @@ s <- s[s$NUTS0_16 == "IT",]
 s$LC2 <- as.factor(substr(s$land_cover,1,2))
 data <- read.csv(paste0(datapath,"Italy_sample_2018.csv"))
 data <- merge(data,s[,c("POINT_ID","LC2")],by="POINT_ID")
-data$target <- as.factor(ifelse(data$LC2 == "A1",1,0))
+data$target <- as.factor(ifelse(data$LC2 == "A2",1,0))
 data <- data[data$LC1 == "A",]
 table(data$target,useNA="ifany")
 data$LC1 <- data$LC2 <- NULL
@@ -39,15 +39,15 @@ test_data$POINT_ID <- NULL
 
 # Random Forest
 set.seed(1234)
-rf_model_A1 <- randomForest(target ~ ., 
+rf_model_A2 <- randomForest(target ~ ., 
                          data=train_data, 
                          importance=TRUE,
                          mtry=15,
                          nodesize=5,
                          ntree=200,
                          do.trace=TRUE)
-save(rf_model_A1,file=paste0(datapath,"rf_model_A1.RData"))
-rf_model <- rf_model_A1
+save(rf_model_A2,file=paste0(datapath,"rf_model_A2.RData"))
+rf_model <- rf_model_A2
 plot(rf_model)
 imp_df <- as.data.frame(rf_model$importance)
 # imp_df <- importance(rf_model)

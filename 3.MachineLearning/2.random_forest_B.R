@@ -15,7 +15,7 @@ datapath <- "D:\\Google Drive\\LUCAS Copernicus\\EarthEngine\\data\\"
 #------------------------------------------------------------------------------
 # Input: 1. LUCAS survey data of a given year / country augmented with EE data 
 data <- read.csv(paste0(datapath,"Italy_sample_2018.csv"))
-data$target <- as.factor(ifelse(data$LC1 == "A",1,0))
+data$target <- as.factor(ifelse(data$LC1 == "B",1,0))
 table(data$target,useNA="ifany")
 data$LC1 <- NULL
 

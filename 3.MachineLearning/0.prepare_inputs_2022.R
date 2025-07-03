@@ -10,7 +10,7 @@ s <- s[s$POINT_NUTS0 == "IT",]
 s$LC1 <- as.factor(substr(s$SURVEY_LC1,1,1))
 # s$LC1 <- as.factor(substr(s$SURVEY_LC1,1,1)) # Only 2022
 # Read first download with CLCM, VV, VH
-glcm <- read.csv(paste0(datapath,"S2_S1_GLCM_Italy_2018.csv"))
+glcm <- read.csv(paste0(datapath,"S2_S1_GLCM_Italy_2022.csv"))
 glcm$NDVI <- (glcm$B8-glcm$B4) / (glcm$B8+glcm$B4)
 glcm$NDWI <- (glcm$B8-glcm$B3) / (glcm$B8+glcm$B3)
 glcm$EVI <- (glcm$B8-glcm$B4) / 2.5 * (glcm$B8 + 6*glcm$B4 - 7.5*glcm$B2 + 0.5)

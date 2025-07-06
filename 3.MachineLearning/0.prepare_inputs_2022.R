@@ -23,6 +23,7 @@ glcm$PSSR <- glcm$B7 / glcm$B4
 glcm$IRECI <- (glcm$B7-glcm$B4) / (glcm$B5/glcm$B6)
 # Read second download with trajectories
 traj <- read.csv(paste0(datapath,"S2_S1_Italy_2022_trajectories_dwt_master.csv"))
+# traj <- read.csv(paste0(datapath,"S2_S1_Italy_2022_trajectories_dwt_master_means2018.csv"))
 
 italy <- m[,c("POINT_ID","ELEV_DEM","aspect_slope","aspect_exposure")]
 italy <- merge(italy,glcm,by="POINT_ID")
@@ -32,3 +33,20 @@ write.table(italy,paste0(datapath,"Italy_master_2022.csv"),sep=",",quote=F,row.n
 
 sample <- merge(italy,s[,c("POINT_ID","LC1")])
 write.table(sample,paste0(datapath,"Italy_sample_2022.csv"),sep=",",quote=F,row.names=F)
+
+# exclude <- c("B1","B2","B3","B4","B5","B6","B7","B8","B8A","B9","B11","B12",
+#              "EVI","MCARI","VH_lin_corr","VV_lin_corr","MCARI","PSSR","IRECI")
+
+include <- c("POINT_ID","ELEV_DEM","aspect_slope","aspect_exposure",
+             "dtw_NDVI_A","dtw_NDVI_B","dtw_NDVI_C","dtw_NDVI_D","dtw_NDVI_E","dtw_NDVI_F","dtw_NDVI_G","dtw_NDVI_H",
+             "dtw_VV_A","dtw_VV_B","dtw_VV_C","dtw_VV_D","dtw_VV_E","dtw_VV_F","dtw_VV_G","dtw_VV_H",  
+             "dtw_VH_A","dtw_VH_B","dtw_VH_C","dtw_VH_D","dtw_VH_E","dtw_VH_F","dtw_VH_G","dtw_VH_H",
+             "VH_lin_savg","VH_lin_var","VV_lin_savg","VV_lin_var")
+
+# italy_reduced <- italy[,!names(italy) %in% exclude]
+italy_reduced <- italy[,names(italy) %in% include]
+
+write.table(italy_reduced,paste0(datapath,"Italy_master_2022_reduced.csv"),sep=",",quote=F,row.names=F)
+
+sample_reduced <- merge(italy_reduced,s[,c("POINT_ID","LC1")],by="POINT_ID")
+write.table(sample_reduced,paste0(datapath,"Italy_sample_2022_reduced.csv"),sep=",",quote=F,row.names=F)

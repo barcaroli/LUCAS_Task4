@@ -74,7 +74,7 @@ mean(m$probs_H)
 
 mean(m$probs_A)+mean(m$probs_B)+mean(m$probs_C)+mean(m$probs_D)+mean(m$probs_E)+mean(m$probs_F)+mean(m$probs_G)+mean(m$probs_H)
 
-s18 <-fread(paste0(datapath,"Italy_sample_2018.csv"))
+s18 <-fread(paste0(datapath,"Italy_sample_2018_reduced_exp.csv"))
 table(s18$LC1)
 s18 <- merge(m[,c("POINT_ID",c("probs_A","probs_B","probs_C","probs_D","probs_E","probs_F","probs_G","probs_H"))],
            s18[,c("POINT_ID","LC1")],by="POINT_ID")
@@ -93,16 +93,29 @@ rf_model <- randomForest(LC1 ~ .,
                          importance=TRUE,
                          # mtry=15,
                          # nodesize=5,
-                         ntree=500,
+                         ntree=200,
                          do.trace=TRUE)
 save(rf_model,file=paste0(datapath,"ensemble_model_reduced.RData"))
+load(paste0(datapath,"ensemble_model_reduced.RData"))
 rf_predictions <- predict(rf_model,test_data)
 # Evaluate models on test data
 cm <- confusionMatrix(rf_predictions, test_data$LC1)
 cm
-t <- addmargins(cm$table)
-t 
+t <- cm$table
+addmargins(t)
+addmargins(round(prop.table(t),4))*100
 
+s18$LC_predicted <- predict(rf_model,s18)
+# Evaluate model
+cm18 <- confusionMatrix(s18$LC_predicted, s18$LC1)
+cm18
+t <- cm18$table
+addmargins(t)
+addmargins(round(prop.table(t),4))*100
+
+s18cal <- fread(paste0(datapath,"Survey_2018_cal_wgt.txt"))
+s18cal <- merge(s18[,c("POINT_ID","LC1","LC_predicted")],s18cal[,c("POINT_ID","cal_wgt")],by="POINT_ID")
+s18 <- s18cal[!duplicated(s18$POINT_ID),]
 
 #---------------------------------
 
@@ -123,11 +136,11 @@ barplot(
 )
 
 # Compute correction factors
-correction_factors <- as.data.frame(marginals_mat[,1] /  marginals_mat[,2])
-correction_factors$LC1 <- LETTERS[1:8]
-colnames(correction_factors)[1] <- "correction"
-correction_factors
-write.table(correction_factors,paste0(datapath,"correction_factors.csv"),sep=",",quote=F,row.names = F)
+# correction_factors <- as.data.frame(marginals_mat[,1] /  marginals_mat[,2])
+# correction_factors$LC1 <- LETTERS[1:8]
+# colnames(correction_factors)[1] <- "correction"
+# correction_factors
+# write.table(correction_factors,paste0(datapath,"correction_factors.csv"),sep=",",quote=F,row.names = F)
 
 
 m$LC_predicted <- predict(rf_model,m)
@@ -135,19 +148,15 @@ m$LC_predicted <- predict(rf_model,m)
 table(m$LC_predicted,useNA = "ifany")/nrow(m)
 
 t1 <- as.data.frame(round(prop.table(xtabs(~LC_predicted,data=m)),4)*100)
-t1$Estimates <- t1$Freq * correction_factors$correction
+# t1$Estimates <- t1$Freq * correction_factors$correction
 t1
 
 write.table(m,paste0(datapath,"Italy_master_2018_with_LC1_predictions.csv"),sep=",",quote=F,row.names=F)
-library(data.table())
-s2 <- fread(paste0(datapath,"Survey_2018_cal_wgt.txt"))
-s2 <- s2[s2$NUTS0_16 == "IT",]
-s2 <- merge(s2,m[,c("POINT_ID","LC_predicted")],by="POINT_ID")
-s2$LC1 <- substr(s2$land_cover,1,1)
-t2 <- as.data.frame(round(prop.table(xtabs(cal_wgt~LC_predicted,data=s2)),4)*100)
+
+t2 <- as.data.frame(round(prop.table(xtabs(cal_wgt~LC_predicted,data=s18)),4)*100)
 t2
 
-t3 <- as.data.frame(round(prop.table(xtabs(cal_wgt~LC1,data=s2)),4)*100)
+t3 <- as.data.frame(round(prop.table(xtabs(cal_wgt~LC1,data=s18)),4)*100)
 t3
 
 # t1$LC_predicted <- factor(t1$LC_predicted, levels = c("A", "B", "C", "D", "E", "F", "G", "H"))

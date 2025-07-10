@@ -1,13 +1,3 @@
-#------------------------------------------------------------------------------
-# 2.randomForest.R
-#
-# Script to estimate a random forest model to predict "land cover" using EE data
-# Input: 1. LUCAS survey data of a given year / country augmented with EE data 
-#        2. master dataset (processed by Ballin) for a given country augmented with EE data
-# Output: 1. LUCAS survey data of a given year / country with predicted land cover 
-#         2. master dataset (processed by Ballin) with predicted land cover 
-#         3. random forest model
-#------------------------------------------------------------------------------
 library(caret)
 # library(ranger)
 library(randomForest)
@@ -15,7 +5,7 @@ datapath <- "D:\\Google Drive\\LUCAS Copernicus\\EarthEngine\\data\\"
 #------------------------------------------------------------------------------
 # Input: 1. LUCAS survey data of a given year / country augmented with EE data 
 data <- read.csv(paste0(datapath,"Italy_sample_2018_reduced_exp.csv"))
-data$target <- as.factor(ifelse(data$LC1 == "G",1,0))
+data$target <- as.factor(ifelse(data$LC1 == "F",1,0))
 table(data$target,useNA="ifany")
 data$LC1 <- NULL
 

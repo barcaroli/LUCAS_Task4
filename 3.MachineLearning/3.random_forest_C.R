@@ -3,7 +3,7 @@ library(randomForest)
 datapath <- "D:\\Google Drive\\LUCAS Copernicus\\EarthEngine\\data\\"
 #------------------------------------------------------------------------------
 # Input: 1. LUCAS survey data of a given year / country augmented with EE data 
-data <- read.csv(paste0(datapath,"Italy_sample_2018.csv"))
+data <- read.csv(paste0(datapath,"Italy_sample_2018_reduced_exp.csv"))
 data$target <- as.factor(ifelse(data$LC1 == "C",1,0))
 table(data$target,useNA="ifany")
 data$LC1 <- NULL
@@ -58,7 +58,7 @@ t
 # reduced eliminating the followin variables
 # c("B1","B2","B3","B4","B5","B6","B7","B8","B8A","B9","B11","B12",
 #   "EVI","MCARI","VH_lin_corr","VV_lin_corr","MCARI","PSSR","IRECI")
-data <- read.csv(paste0(datapath,"Italy_sample_2018_reduced.csv"))
+data <- read.csv(paste0(datapath,"Italy_sample_2018_reduced_exp.csv"))
 data$target <- as.factor(ifelse(data$LC1 == "C",1,0))
 table(data$target,useNA="ifany")
 data$LC1 <- NULL

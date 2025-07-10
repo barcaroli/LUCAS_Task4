@@ -48,3 +48,13 @@ write.table(italy_reduced,paste0(datapath,"Italy_master_2018_reduced.csv"),sep="
 
 sample_reduced <- merge(italy_reduced,s[,c("POINT_ID","LC1")],by="POINT_ID")
 write.table(sample_reduced,paste0(datapath,"Italy_sample_2018_reduced.csv"),sep=",",quote=F,row.names=F)
+
+# Expand of the sample to the whole master
+sample_reduced <- merge(sample_reduced,s[,c("POINT_ID","cal_wgt","point_area")],by="POINT_ID")
+sum(sample_reduced$cal_wgt/sample_reduced$point_area)
+sample_reduced_exp <- sample_reduced[rep(seq_len(nrow(sample_reduced)), round(sample_reduced$cal_wgt/sample_reduced$point_area)),]
+nrow(sample_reduced_exp)
+round(table(sample$LC1)/nrow(sample),4)*100
+round(table(sample_reduced_exp$LC1)/nrow(sample_reduced_exp),4)*100
+sample_reduced_exp$cal_wgt <- sample_reduced_exp$point_area <- NULL
+write.table(sample_reduced_exp,paste0(datapath,"Italy_sample_2018_reduced_exp.csv"),sep=",",quote=F,row.names=F)

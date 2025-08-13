@@ -1,1 +1,0 @@
-R CMD BATCH 4.dwt_2022.R

@@ -18,7 +18,7 @@ os.chdir("C:\\Users\\UTENTE\\Google Drive laptop\\LUCAS Copernicus\\EarthEngine\
 
 # Earth Engine authentication
 ee.Authenticate(auth_mode='localhost')
-ee.Initialize(project='landcovercopernicus')
+ee.Initialize(project='***')
 
 # Load point data
 df = pd.read_csv("italy_master_points.csv")

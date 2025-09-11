@@ -1,0 +1,1264 @@
+
+R version 4.5.0 (2025-04-11 ucrt) -- "How About a Twenty-Six"
+Copyright (C) 2025 The R Foundation for Statistical Computing
+Platform: x86_64-w64-mingw32/x64
+
+R è un software libero ed è rilasciato SENZA ALCUNA GARANZIA.
+Siamo ben lieti se potrai redistribuirlo, ma sotto certe condizioni.
+Scrivi 'license()' o 'licence()' per maggiori dettagli.
+
+R è un progetto collaborativo con molti contributi esterni.
+Scrivi 'contributors()' per maggiori informazioni e 'citation()'
+per sapere come citare R o i pacchetti nelle pubblicazioni.
+
+Scrivi 'demo()' per una dimostrazione, 'help()' per la guida
+oppure 'help.start()' per la guida nel browser HTML.
+Scrivi 'q()' per uscire da R.
+
+> # ============================================================
+> # Sentinel data (221 variables) models fitting — FIXED
+> # ============================================================
+> n_evals_rf  <- 1
+> n_evals_xgb <- 1
+> 
+> req <- c("mlr3verse","mlr3learners","mlr3pipelines","mlr3tuning",
++          "paradox","data.table","ggplot2","ranger","xgboost","R6")
+> to_install <- setdiff(req, rownames(installed.packages()))
+> if (length(to_install)) install.packages(to_install)
+> suppressPackageStartupMessages({
++   library(data.table)
++   library(mlr3verse)
++   library(mlr3learners)
++   library(mlr3pipelines)
++   library(mlr3tuning)
++   library(paradox)
++   library(ggplot2)
++   library(R6)
++ })
+Messaggi di avvertimento:
+1: il pacchetto 'mlr3' è stato creato con R versione 4.5.1 
+2: il pacchetto 'mlr3tuning' è stato creato con R versione 4.5.1 
+> 
+> # ---------------------------
+> # 0) Parametri
+> # ---------------------------
+> datapath    <- "D:/Google Drive/LUCAS Copernicus/EarthEngine/SENTINEL/workflow/data/"
+> pattern     <- "\\Italy_sample_2018_reduced_aux_completo_rain_fourier.csv"
+> target_col  <- "LC1"
+> id_col      <- "POINT_ID"
+> fold_col    <- "cv_fold"
+> nfolds      <- 5
+> seed        <- 42
+> 
+> # Classi da favorire
+> favored <- c("D","F","G","H")
+> 
+> # Pesi recall (tuning)
+> w_recall_vec <- setNames(rep(1, 8), LETTERS[1:8]); w_recall_vec[favored] <- 3
+> 
+> # Soglie post-hoc “semplici” (<=1 favoriscono la classe)
+> thresh_vec <- setNames(rep(1, 8), LETTERS[1:8]); thresh_vec[favored] <- 0.7
+> 
+> # ---------------------------
+> # 1) Caricamento & pulizia
+> # ---------------------------
+> fs <- list.files(datapath, pattern = pattern, full.names = TRUE)
+> stopifnot("Nessun file CSV trovato" = length(fs) > 0)
+> X  <- rbindlist(lapply(fs, fread), use.names = TRUE, fill = TRUE)
+> 
+> # LC1 come fattore con livelli A..H
+> X[[target_col]] <- factor(X[[target_col]], levels = LETTERS[1:8])
+> 
+> fa <- names(X)[vapply(X, is.factor, logical(1))]
+> ch <- names(X)[vapply(X, is.character, logical(1))]
+> for (cc in ch) X[[cc]] <- factor(X[[cc]])
+> 
+> # de-dup su ID se presente
+> if (id_col %in% names(X)) X <- X[!duplicated(X[[id_col]]), ]
+> 
+> # Definisci colonne non-feature (le teniamo in X per eventuale CV custom)
+> ID_COLS      <- c("POINT_ID")
+> LOC_COLS     <- c("NUTS2_16")             # tipicamente character
+> W            <- c("cal_wgt", "cal_wgt.x", "cal_wgt.y", "wgt_2nd_phase")
+> COORD        <- c("lon","lat")
+> FOLD         <- c("cv_fold")
+> 
+> NON_FEATURE  <- unique(c(ID_COLS, W, COORD, FOLD, target_col))
+> 
+> # Feature = tutto tranne target e NON_FEATURE
+> feat_cols <- setdiff(names(X), NON_FEATURE)
+> 
+> cat("\n--- Distribuzione LC1 ---\n")
+
+--- Distribuzione LC1 ---
+> print(round(prop.table(table(X[[target_col]])), 4))
+
+     A      B      C      D      E      F      G      H 
+0.0839 0.2749 0.4013 0.0462 0.1692 0.0138 0.0086 0.0021 
+> 
+> # ---------------------------
+> # 2) Task & Resampling
+> # ---------------------------
+> set.seed(seed)
+> task <- TaskClassif$new("lc1_ae", backend = X, target = target_col)
+> 
+> # seleziona solo le feature per il modello
+> task$select(feat_cols)
+> 
+> if (fold_col %in% names(X)) {
++   folds <- as.integer(X[[fold_col]])
++   K     <- max(folds, na.rm = TRUE)
++   idx   <- split(seq_len(nrow(X)), folds)
++   train_sets <- lapply(seq_len(K), function(k) unlist(idx[setdiff(seq_len(K), k)]))
++   test_sets  <- lapply(seq_len(K), function(k) unlist(idx[k]))
++   rsmp_use <- rsmp("custom"); rsmp_use$instantiate(task, train = train_sets, test = test_sets)
++   message(sprintf("Usata CV custom (%d fold) da '%s'.", K, fold_col))
++ } else {
++   rsmp_use <- rsmp("cv", folds = nfolds); rsmp_use$instantiate(task)
++   message(sprintf("Usata CV stratificata a %d fold.", nfolds))
++ }
+Usata CV stratificata a 5 fold.
+> 
+> # ---------------------------
+> # 3) Metrica custom: Weighted Recall (con .score)
+> # ---------------------------
+> MeasureClassifWRecall <- R6::R6Class("MeasureClassifWRecall",
++                                      inherit = mlr3::MeasureClassif,
++                                      public = list(
++                                        weights = NULL,
++                                        initialize = function(weights) {
++                                          self$weights = weights
++                                          super$initialize(
++                                            id = "classif.wrecall",
++                                            range = c(0, 1),
++                                            minimize = FALSE,
++                                            properties = character(0),
++                                            predict_type = "response"
++                                          )
++                                        }
++                                      ),
++                                      private = list(
++                                        .score = function(prediction, ...) {
++                                          cm  <- table(prediction$truth, prediction$response)
++                                          rec <- diag(cm) / pmax(rowSums(cm), 1)
++                                          cls <- rownames(cm)
++                                          w   <- self$weights[cls]; w[is.na(w)] <- 1
++                                          sum(rec * w) / sum(w)
++                                        }
++                                      )
++ )
+> msr_wrecall <- MeasureClassifWRecall$new(w_recall_vec)
+> 
+> # ---------------------------
+> # 4) Learners + Tuning space
+> # ---------------------------
+> 
+> # ---- RF (ranger) con class weights ----
+> tab <- table(task$truth()); p <- as.numeric(tab) / sum(tab)
+> alpha <- 1.6
+> base_w <- (1 / p) ^ alpha; names(base_w) <- names(tab)
+> boost  <- setNames(rep(1, length(tab)), names(tab)); boost[favored] <- 1.5
+> w_rf   <- (base_w * boost) / mean(base_w * boost)
+> 
+> lrn_rf <- lrn("classif.ranger",
++               num.trees = 600,
++               importance = "impurity",
++               class.weights = w_rf,
++               respect.unordered.factors = "order",
++               seed = seed,
++               predict_type = "prob"
++ )
+> 
+> space_rf <- ps(
++   mtry          = p_int(8, 48),
++   min.node.size = p_int(1, 10),
++   splitrule     = p_fct(c("gini", "extratrees"))
++ )
+> 
+> # Terminator esplicito
+> term_rf  <- bbotk::trm("evals"); term_rf$param_set$values$n_evals  <- as.integer(n_evals_rf)
+> 
+> at_rf <- AutoTuner$new(
++   learner      = lrn_rf,
++   resampling   = rsmp("holdout"),
++   measure      = msr_wrecall,
++   search_space = space_rf,
++   terminator   = term_rf,
++   tuner        = tnr("random_search")
++ )
+> 
+> # ---- XGBoost con oversampling + ENCODER ----
+> # Encoder one-hot (selezione tipi come vettore; fallback se 'character' non supportato)
+> po_enc <- po("encode", method = "one-hot")
+> ok <- TRUE
+> tryCatch({
++   po_enc$param_set$values$affect_columns <- selector_type(c("factor","character","ordered"))
++ }, error = function(e) { ok <<- FALSE })
+> if (!ok || is.null(po_enc$param_set$values$affect_columns)) {
++   po_enc$param_set$values$affect_columns <- selector_type(c("factor","ordered"))
++ }
+> 
+> po_cb  <- po("classbalancing", adjust = "minor", reference = "major", ratio = 1.3)
+> 
+> lrn_xgb <- lrn("classif.xgboost",
++                objective   = "multi:softprob",
++                eval_metric = "mlogloss",
++                nthread     = max(1L, parallel::detectCores() - 1L),
++                tree_method = "hist",
++                booster     = "gbtree",
++                predict_type = "prob"
++ )
+> 
+> graph_xgb <- po_enc %>>% po_cb %>>% lrn_xgb
+> gxl <- as_learner(graph_xgb)
+> 
+> space_xgb <- ps(
++   classif.xgboost.eta              = p_dbl(0.03, 0.30),
++   classif.xgboost.max_depth        = p_int(4, 12),
++   classif.xgboost.min_child_weight = p_int(1, 8),
++   classif.xgboost.subsample        = p_dbl(0.6, 1.0),
++   classif.xgboost.colsample_bytree = p_dbl(0.6, 1.0),
++   classif.xgboost.nrounds          = p_int(200, 1200)
++ )
+> 
+> term_xgb <- bbotk::trm("evals"); term_xgb$param_set$values$n_evals <- as.integer(n_evals_xgb)
+> 
+> at_xgb <- AutoTuner$new(
++   learner      = gxl,
++   resampling   = rsmp("holdout"),
++   measure      = msr_wrecall,
++   search_space = space_xgb,
++   terminator   = term_xgb,
++   tuner        = tnr("random_search")
++ )
+> 
+> # ---------------------------
+> # 5) Benchmark con CV finale
+> # ---------------------------
+> design <- benchmark_grid(
++   tasks = task,
++   learners = list(at_rf, at_xgb),
++   resamplings = rsmp_use
++ )
+> bmr <- benchmark(design)
+INFO  [16:26:26.164] [mlr3] Running benchmark with 10 resampling iterations
+INFO  [16:26:26.283] [mlr3] Applying learner 'classif.ranger.tuned' on task 'lc1_ae' (iter 1/5)
+INFO  [16:26:26.895] [bbotk] Starting to optimize 3 parameter(s) with '<OptimizerBatchRandomSearch>' and '<TerminatorEvals> [n_evals=1, k=0]'
+INFO  [16:26:26.940] [bbotk] Evaluating 1 configuration(s)
+INFO  [16:26:26.950] [mlr3] Running benchmark with 1 resampling iterations
+INFO  [16:26:26.969] [mlr3] Applying learner 'classif.ranger' on task 'lc1_ae' (iter 1/1)
+Growing trees.. Progress: 4%. Estimated remaining time: 12 minutes, 57 seconds.
+Growing trees.. Progress: 8%. Estimated remaining time: 12 minutes, 21 seconds.
+Growing trees.. Progress: 12%. Estimated remaining time: 11 minutes, 47 seconds.
+Growing trees.. Progress: 16%. Estimated remaining time: 11 minutes, 9 seconds.
+Growing trees.. Progress: 20%. Estimated remaining time: 10 minutes, 38 seconds.
+Growing trees.. Progress: 24%. Estimated remaining time: 10 minutes, 7 seconds.
+Growing trees.. Progress: 28%. Estimated remaining time: 9 minutes, 35 seconds.
+Growing trees.. Progress: 32%. Estimated remaining time: 9 minutes, 3 seconds.
+Growing trees.. Progress: 36%. Estimated remaining time: 8 minutes, 32 seconds.
+Growing trees.. Progress: 40%. Estimated remaining time: 8 minutes, 3 seconds.
+Growing trees.. Progress: 44%. Estimated remaining time: 7 minutes, 33 seconds.
+Growing trees.. Progress: 47%. Estimated remaining time: 7 minutes, 2 seconds.
+Growing trees.. Progress: 51%. Estimated remaining time: 6 minutes, 30 seconds.
+Growing trees.. Progress: 55%. Estimated remaining time: 6 minutes, 0 seconds.
+Growing trees.. Progress: 59%. Estimated remaining time: 5 minutes, 30 seconds.
+Growing trees.. Progress: 63%. Estimated remaining time: 4 minutes, 59 seconds.
+Growing trees.. Progress: 67%. Estimated remaining time: 4 minutes, 28 seconds.
+Growing trees.. Progress: 71%. Estimated remaining time: 3 minutes, 57 seconds.
+Growing trees.. Progress: 74%. Estimated remaining time: 3 minutes, 27 seconds.
+Growing trees.. Progress: 78%. Estimated remaining time: 2 minutes, 54 seconds.
+Growing trees.. Progress: 82%. Estimated remaining time: 2 minutes, 22 seconds.
+Growing trees.. Progress: 86%. Estimated remaining time: 1 minute, 50 seconds.
+Growing trees.. Progress: 90%. Estimated remaining time: 1 minute, 17 seconds.
+Growing trees.. Progress: 94%. Estimated remaining time: 45 seconds.
+Growing trees.. Progress: 98%. Estimated remaining time: 13 seconds.
+INFO  [16:40:01.508] [mlr3] Finished benchmark
+INFO  [16:40:01.554] [bbotk] Result of batch 1:
+INFO  [16:40:01.559] [bbotk]  mtry min.node.size splitrule classif.wrecall warnings errors runtime_learners
+INFO  [16:40:01.559] [bbotk]    48             7      gini       0.3098002        0      0           814.53
+INFO  [16:40:01.559] [bbotk]                                 uhash
+INFO  [16:40:01.559] [bbotk]  f10a1e99-8eb1-43b1-ab4a-3260e4b363a5
+INFO  [16:40:01.593] [bbotk] Finished optimizing after 1 evaluation(s)
+INFO  [16:40:01.596] [bbotk] Result:
+INFO  [16:40:01.600] [bbotk]   mtry min.node.size splitrule learner_param_vals  x_domain classif.wrecall
+INFO  [16:40:01.600] [bbotk]  <int>         <int>    <char>             <list>    <list>           <num>
+INFO  [16:40:01.600] [bbotk]     48             7      gini          <list[9]> <list[3]>       0.3098002
+Growing trees.. Progress: 2%. Estimated remaining time: 24 minutes, 4 seconds.
+Growing trees.. Progress: 4%. Estimated remaining time: 23 minutes, 32 seconds.
+Growing trees.. Progress: 7%. Estimated remaining time: 23 minutes, 0 seconds.
+Growing trees.. Progress: 9%. Estimated remaining time: 22 minutes, 11 seconds.
+Growing trees.. Progress: 11%. Estimated remaining time: 21 minutes, 34 seconds.
+Growing trees.. Progress: 13%. Estimated remaining time: 21 minutes, 6 seconds.
+Growing trees.. Progress: 15%. Estimated remaining time: 20 minutes, 36 seconds.
+Growing trees.. Progress: 18%. Estimated remaining time: 20 minutes, 2 seconds.
+Growing trees.. Progress: 20%. Estimated remaining time: 19 minutes, 32 seconds.
+Growing trees.. Progress: 22%. Estimated remaining time: 18 minutes, 58 seconds.
+Growing trees.. Progress: 24%. Estimated remaining time: 18 minutes, 28 seconds.
+Growing trees.. Progress: 26%. Estimated remaining time: 17 minutes, 55 seconds.
+Growing trees.. Progress: 28%. Estimated remaining time: 17 minutes, 24 seconds.
+Growing trees.. Progress: 31%. Estimated remaining time: 16 minutes, 46 seconds.
+Growing trees.. Progress: 33%. Estimated remaining time: 16 minutes, 10 seconds.
+Growing trees.. Progress: 35%. Estimated remaining time: 15 minutes, 35 seconds.
+Growing trees.. Progress: 38%. Estimated remaining time: 15 minutes, 4 seconds.
+Growing trees.. Progress: 40%. Estimated remaining time: 14 minutes, 30 seconds.
+Growing trees.. Progress: 42%. Estimated remaining time: 13 minutes, 55 seconds.
+Growing trees.. Progress: 45%. Estimated remaining time: 13 minutes, 20 seconds.
+Growing trees.. Progress: 47%. Estimated remaining time: 12 minutes, 49 seconds.
+Growing trees.. Progress: 49%. Estimated remaining time: 12 minutes, 17 seconds.
+Growing trees.. Progress: 51%. Estimated remaining time: 11 minutes, 44 seconds.
+Growing trees.. Progress: 54%. Estimated remaining time: 11 minutes, 10 seconds.
+Growing trees.. Progress: 56%. Estimated remaining time: 10 minutes, 36 seconds.
+Growing trees.. Progress: 58%. Estimated remaining time: 10 minutes, 5 seconds.
+Growing trees.. Progress: 60%. Estimated remaining time: 9 minutes, 33 seconds.
+Growing trees.. Progress: 62%. Estimated remaining time: 9 minutes, 3 seconds.
+Growing trees.. Progress: 65%. Estimated remaining time: 8 minutes, 31 seconds.
+Growing trees.. Progress: 67%. Estimated remaining time: 8 minutes, 0 seconds.
+Growing trees.. Progress: 69%. Estimated remaining time: 7 minutes, 26 seconds.
+Growing trees.. Progress: 71%. Estimated remaining time: 6 minutes, 55 seconds.
+Growing trees.. Progress: 74%. Estimated remaining time: 6 minutes, 21 seconds.
+Growing trees.. Progress: 76%. Estimated remaining time: 5 minutes, 48 seconds.
+Growing trees.. Progress: 78%. Estimated remaining time: 5 minutes, 16 seconds.
+Growing trees.. Progress: 80%. Estimated remaining time: 4 minutes, 45 seconds.
+Growing trees.. Progress: 82%. Estimated remaining time: 4 minutes, 14 seconds.
+Growing trees.. Progress: 85%. Estimated remaining time: 3 minutes, 43 seconds.
+Growing trees.. Progress: 87%. Estimated remaining time: 3 minutes, 9 seconds.
+Growing trees.. Progress: 89%. Estimated remaining time: 2 minutes, 38 seconds.
+Growing trees.. Progress: 91%. Estimated remaining time: 2 minutes, 4 seconds.
+Growing trees.. Progress: 94%. Estimated remaining time: 1 minute, 33 seconds.
+Growing trees.. Progress: 96%. Estimated remaining time: 1 minute, 2 seconds.
+Growing trees.. Progress: 98%. Estimated remaining time: 31 seconds.
+INFO  [17:04:12.167] [mlr3] Applying learner 'classif.ranger.tuned' on task 'lc1_ae' (iter 2/5)
+INFO  [17:04:12.262] [bbotk] Starting to optimize 3 parameter(s) with '<OptimizerBatchRandomSearch>' and '<TerminatorEvals> [n_evals=1, k=0]'
+INFO  [17:04:12.308] [bbotk] Evaluating 1 configuration(s)
+INFO  [17:04:12.317] [mlr3] Running benchmark with 1 resampling iterations
+INFO  [17:04:12.337] [mlr3] Applying learner 'classif.ranger' on task 'lc1_ae' (iter 1/1)
+Growing trees.. Progress: 21%. Estimated remaining time: 2 minutes, 0 seconds.
+Growing trees.. Progress: 42%. Estimated remaining time: 1 minute, 27 seconds.
+Growing trees.. Progress: 63%. Estimated remaining time: 55 seconds.
+Growing trees.. Progress: 84%. Estimated remaining time: 24 seconds.
+INFO  [17:06:49.477] [mlr3] Finished benchmark
+INFO  [17:06:49.526] [bbotk] Result of batch 1:
+INFO  [17:06:49.530] [bbotk]  mtry min.node.size  splitrule classif.wrecall warnings errors runtime_learners
+INFO  [17:06:49.530] [bbotk]    43             1 extratrees       0.2820043        0      0           157.12
+INFO  [17:06:49.530] [bbotk]                                 uhash
+INFO  [17:06:49.530] [bbotk]  57c0d391-0dc9-4c1d-b2e7-0a628acab990
+INFO  [17:06:49.568] [bbotk] Finished optimizing after 1 evaluation(s)
+INFO  [17:06:49.571] [bbotk] Result:
+INFO  [17:06:49.575] [bbotk]   mtry min.node.size  splitrule learner_param_vals  x_domain classif.wrecall
+INFO  [17:06:49.575] [bbotk]  <int>         <int>     <char>             <list>    <list>           <num>
+INFO  [17:06:49.575] [bbotk]     43             1 extratrees          <list[9]> <list[3]>       0.2820043
+Growing trees.. Progress: 12%. Estimated remaining time: 3 minutes, 43 seconds.
+Growing trees.. Progress: 25%. Estimated remaining time: 3 minutes, 6 seconds.
+Growing trees.. Progress: 38%. Estimated remaining time: 2 minutes, 32 seconds.
+Growing trees.. Progress: 50%. Estimated remaining time: 2 minutes, 2 seconds.
+Growing trees.. Progress: 63%. Estimated remaining time: 1 minute, 32 seconds.
+Growing trees.. Progress: 75%. Estimated remaining time: 1 minute, 1 seconds.
+Growing trees.. Progress: 88%. Estimated remaining time: 29 seconds.
+INFO  [17:11:06.558] [mlr3] Applying learner 'classif.ranger.tuned' on task 'lc1_ae' (iter 3/5)
+INFO  [17:11:06.687] [bbotk] Starting to optimize 3 parameter(s) with '<OptimizerBatchRandomSearch>' and '<TerminatorEvals> [n_evals=1, k=0]'
+INFO  [17:11:06.728] [bbotk] Evaluating 1 configuration(s)
+INFO  [17:11:06.737] [mlr3] Running benchmark with 1 resampling iterations
+INFO  [17:11:06.755] [mlr3] Applying learner 'classif.ranger' on task 'lc1_ae' (iter 1/1)
+Growing trees.. Progress: 6%. Estimated remaining time: 8 minutes, 52 seconds.
+Growing trees.. Progress: 11%. Estimated remaining time: 8 minutes, 21 seconds.
+Growing trees.. Progress: 17%. Estimated remaining time: 7 minutes, 55 seconds.
+Growing trees.. Progress: 22%. Estimated remaining time: 7 minutes, 26 seconds.
+Growing trees.. Progress: 28%. Estimated remaining time: 6 minutes, 53 seconds.
+Growing trees.. Progress: 33%. Estimated remaining time: 6 minutes, 24 seconds.
+Growing trees.. Progress: 38%. Estimated remaining time: 5 minutes, 56 seconds.
+Growing trees.. Progress: 44%. Estimated remaining time: 5 minutes, 26 seconds.
+Growing trees.. Progress: 49%. Estimated remaining time: 4 minutes, 54 seconds.
+Growing trees.. Progress: 54%. Estimated remaining time: 4 minutes, 23 seconds.
+Growing trees.. Progress: 60%. Estimated remaining time: 3 minutes, 53 seconds.
+Growing trees.. Progress: 65%. Estimated remaining time: 3 minutes, 22 seconds.
+Growing trees.. Progress: 70%. Estimated remaining time: 2 minutes, 52 seconds.
+Growing trees.. Progress: 76%. Estimated remaining time: 2 minutes, 21 seconds.
+Growing trees.. Progress: 81%. Estimated remaining time: 1 minute, 50 seconds.
+Growing trees.. Progress: 86%. Estimated remaining time: 1 minute, 19 seconds.
+Growing trees.. Progress: 92%. Estimated remaining time: 48 seconds.
+Growing trees.. Progress: 97%. Estimated remaining time: 17 seconds.
+INFO  [17:20:57.827] [mlr3] Finished benchmark
+INFO  [17:20:57.868] [bbotk] Result of batch 1:
+INFO  [17:20:57.872] [bbotk]  mtry min.node.size splitrule classif.wrecall warnings errors runtime_learners
+INFO  [17:20:57.872] [bbotk]    35             5      gini       0.2958076        0      0           591.05
+INFO  [17:20:57.872] [bbotk]                                 uhash
+INFO  [17:20:57.872] [bbotk]  dfe384f0-3795-4d84-8241-8a7b83f748d1
+INFO  [17:20:57.906] [bbotk] Finished optimizing after 1 evaluation(s)
+INFO  [17:20:57.908] [bbotk] Result:
+INFO  [17:20:57.912] [bbotk]   mtry min.node.size splitrule learner_param_vals  x_domain classif.wrecall
+INFO  [17:20:57.912] [bbotk]  <int>         <int>    <char>             <list>    <list>           <num>
+INFO  [17:20:57.912] [bbotk]     35             5      gini          <list[9]> <list[3]>       0.2958076
+Growing trees.. Progress: 3%. Estimated remaining time: 15 minutes, 47 seconds.
+Growing trees.. Progress: 6%. Estimated remaining time: 15 minutes, 31 seconds.
+Growing trees.. Progress: 10%. Estimated remaining time: 15 minutes, 5 seconds.
+Growing trees.. Progress: 13%. Estimated remaining time: 14 minutes, 35 seconds.
+Growing trees.. Progress: 16%. Estimated remaining time: 14 minutes, 10 seconds.
+Growing trees.. Progress: 19%. Estimated remaining time: 13 minutes, 47 seconds.
+Growing trees.. Progress: 22%. Estimated remaining time: 13 minutes, 14 seconds.
+Growing trees.. Progress: 25%. Estimated remaining time: 12 minutes, 42 seconds.
+Growing trees.. Progress: 28%. Estimated remaining time: 12 minutes, 15 seconds.
+Growing trees.. Progress: 31%. Estimated remaining time: 11 minutes, 45 seconds.
+Growing trees.. Progress: 34%. Estimated remaining time: 11 minutes, 14 seconds.
+Growing trees.. Progress: 37%. Estimated remaining time: 10 minutes, 41 seconds.
+Growing trees.. Progress: 41%. Estimated remaining time: 10 minutes, 8 seconds.
+Growing trees.. Progress: 44%. Estimated remaining time: 9 minutes, 36 seconds.
+Growing trees.. Progress: 46%. Estimated remaining time: 9 minutes, 13 seconds.
+Growing trees.. Progress: 49%. Estimated remaining time: 8 minutes, 50 seconds.
+Growing trees.. Progress: 52%. Estimated remaining time: 8 minutes, 23 seconds.
+Growing trees.. Progress: 55%. Estimated remaining time: 7 minutes, 48 seconds.
+Growing trees.. Progress: 58%. Estimated remaining time: 7 minutes, 15 seconds.
+Growing trees.. Progress: 61%. Estimated remaining time: 6 minutes, 41 seconds.
+Growing trees.. Progress: 65%. Estimated remaining time: 6 minutes, 8 seconds.
+Growing trees.. Progress: 68%. Estimated remaining time: 5 minutes, 34 seconds.
+Growing trees.. Progress: 71%. Estimated remaining time: 5 minutes, 1 seconds.
+Growing trees.. Progress: 74%. Estimated remaining time: 4 minutes, 28 seconds.
+Growing trees.. Progress: 77%. Estimated remaining time: 3 minutes, 54 seconds.
+Growing trees.. Progress: 80%. Estimated remaining time: 3 minutes, 22 seconds.
+Growing trees.. Progress: 84%. Estimated remaining time: 2 minutes, 49 seconds.
+Growing trees.. Progress: 87%. Estimated remaining time: 2 minutes, 16 seconds.
+Growing trees.. Progress: 90%. Estimated remaining time: 1 minute, 44 seconds.
+Growing trees.. Progress: 93%. Estimated remaining time: 1 minute, 11 seconds.
+Growing trees.. Progress: 96%. Estimated remaining time: 39 seconds.
+Growing trees.. Progress: 99%. Estimated remaining time: 6 seconds.
+INFO  [17:38:12.816] [mlr3] Applying learner 'classif.ranger.tuned' on task 'lc1_ae' (iter 4/5)
+INFO  [17:38:12.911] [bbotk] Starting to optimize 3 parameter(s) with '<OptimizerBatchRandomSearch>' and '<TerminatorEvals> [n_evals=1, k=0]'
+INFO  [17:38:12.956] [bbotk] Evaluating 1 configuration(s)
+INFO  [17:38:12.966] [mlr3] Running benchmark with 1 resampling iterations
+INFO  [17:38:12.984] [mlr3] Applying learner 'classif.ranger' on task 'lc1_ae' (iter 1/1)
+Growing trees.. Progress: 5%. Estimated remaining time: 10 minutes, 10 seconds.
+Growing trees.. Progress: 10%. Estimated remaining time: 9 minutes, 28 seconds.
+Growing trees.. Progress: 15%. Estimated remaining time: 9 minutes, 6 seconds.
+Growing trees.. Progress: 20%. Estimated remaining time: 8 minutes, 36 seconds.
+Growing trees.. Progress: 24%. Estimated remaining time: 8 minutes, 8 seconds.
+Growing trees.. Progress: 29%. Estimated remaining time: 7 minutes, 36 seconds.
+Growing trees.. Progress: 34%. Estimated remaining time: 7 minutes, 5 seconds.
+Growing trees.. Progress: 39%. Estimated remaining time: 6 minutes, 33 seconds.
+Growing trees.. Progress: 44%. Estimated remaining time: 6 minutes, 1 seconds.
+Growing trees.. Progress: 49%. Estimated remaining time: 5 minutes, 31 seconds.
+Growing trees.. Progress: 54%. Estimated remaining time: 4 minutes, 59 seconds.
+Growing trees.. Progress: 59%. Estimated remaining time: 4 minutes, 27 seconds.
+Growing trees.. Progress: 63%. Estimated remaining time: 3 minutes, 56 seconds.
+Growing trees.. Progress: 68%. Estimated remaining time: 3 minutes, 25 seconds.
+Growing trees.. Progress: 73%. Estimated remaining time: 2 minutes, 54 seconds.
+Growing trees.. Progress: 78%. Estimated remaining time: 2 minutes, 21 seconds.
+Growing trees.. Progress: 83%. Estimated remaining time: 1 minute, 50 seconds.
+Growing trees.. Progress: 88%. Estimated remaining time: 1 minute, 19 seconds.
+Growing trees.. Progress: 93%. Estimated remaining time: 48 seconds.
+Growing trees.. Progress: 97%. Estimated remaining time: 17 seconds.
+INFO  [17:49:08.858] [mlr3] Finished benchmark
+INFO  [17:49:08.902] [bbotk] Result of batch 1:
+INFO  [17:49:08.906] [bbotk]  mtry min.node.size splitrule classif.wrecall warnings errors runtime_learners
+INFO  [17:49:08.906] [bbotk]    39             4      gini       0.2977447        0      0           655.86
+INFO  [17:49:08.906] [bbotk]                                 uhash
+INFO  [17:49:08.906] [bbotk]  73d39832-375a-4b38-b72f-e3f787e429cd
+INFO  [17:49:08.941] [bbotk] Finished optimizing after 1 evaluation(s)
+INFO  [17:49:08.943] [bbotk] Result:
+INFO  [17:49:08.946] [bbotk]   mtry min.node.size splitrule learner_param_vals  x_domain classif.wrecall
+INFO  [17:49:08.946] [bbotk]  <int>         <int>    <char>             <list>    <list>           <num>
+INFO  [17:49:08.946] [bbotk]     39             4      gini          <list[9]> <list[3]>       0.2977447
+Growing trees.. Progress: 3%. Estimated remaining time: 18 minutes, 17 seconds.
+Growing trees.. Progress: 6%. Estimated remaining time: 17 minutes, 45 seconds.
+Growing trees.. Progress: 9%. Estimated remaining time: 17 minutes, 2 seconds.
+Growing trees.. Progress: 11%. Estimated remaining time: 16 minutes, 33 seconds.
+Growing trees.. Progress: 14%. Estimated remaining time: 16 minutes, 3 seconds.
+Growing trees.. Progress: 17%. Estimated remaining time: 15 minutes, 37 seconds.
+Growing trees.. Progress: 20%. Estimated remaining time: 15 minutes, 5 seconds.
+Growing trees.. Progress: 23%. Estimated remaining time: 14 minutes, 36 seconds.
+Growing trees.. Progress: 26%. Estimated remaining time: 14 minutes, 4 seconds.
+Growing trees.. Progress: 28%. Estimated remaining time: 13 minutes, 31 seconds.
+Growing trees.. Progress: 31%. Estimated remaining time: 12 minutes, 57 seconds.
+Growing trees.. Progress: 34%. Estimated remaining time: 12 minutes, 25 seconds.
+Growing trees.. Progress: 37%. Estimated remaining time: 11 minutes, 53 seconds.
+Growing trees.. Progress: 40%. Estimated remaining time: 11 minutes, 21 seconds.
+Growing trees.. Progress: 43%. Estimated remaining time: 10 minutes, 50 seconds.
+Growing trees.. Progress: 45%. Estimated remaining time: 10 minutes, 17 seconds.
+Growing trees.. Progress: 48%. Estimated remaining time: 9 minutes, 45 seconds.
+Growing trees.. Progress: 51%. Estimated remaining time: 9 minutes, 14 seconds.
+Growing trees.. Progress: 54%. Estimated remaining time: 8 minutes, 42 seconds.
+Growing trees.. Progress: 57%. Estimated remaining time: 8 minutes, 10 seconds.
+Growing trees.. Progress: 60%. Estimated remaining time: 7 minutes, 38 seconds.
+Growing trees.. Progress: 62%. Estimated remaining time: 7 minutes, 9 seconds.
+Growing trees.. Progress: 65%. Estimated remaining time: 6 minutes, 36 seconds.
+Growing trees.. Progress: 68%. Estimated remaining time: 6 minutes, 4 seconds.
+Growing trees.. Progress: 71%. Estimated remaining time: 5 minutes, 32 seconds.
+Growing trees.. Progress: 74%. Estimated remaining time: 5 minutes, 0 seconds.
+Growing trees.. Progress: 76%. Estimated remaining time: 4 minutes, 28 seconds.
+Growing trees.. Progress: 79%. Estimated remaining time: 3 minutes, 56 seconds.
+Growing trees.. Progress: 82%. Estimated remaining time: 3 minutes, 23 seconds.
+Growing trees.. Progress: 85%. Estimated remaining time: 2 minutes, 51 seconds.
+Growing trees.. Progress: 88%. Estimated remaining time: 2 minutes, 19 seconds.
+Growing trees.. Progress: 91%. Estimated remaining time: 1 minute, 47 seconds.
+Growing trees.. Progress: 93%. Estimated remaining time: 1 minute, 15 seconds.
+Growing trees.. Progress: 96%. Estimated remaining time: 43 seconds.
+Growing trees.. Progress: 99%. Estimated remaining time: 11 seconds.
+INFO  [18:08:07.890] [mlr3] Applying learner 'classif.ranger.tuned' on task 'lc1_ae' (iter 5/5)
+INFO  [18:08:07.985] [bbotk] Starting to optimize 3 parameter(s) with '<OptimizerBatchRandomSearch>' and '<TerminatorEvals> [n_evals=1, k=0]'
+INFO  [18:08:08.025] [bbotk] Evaluating 1 configuration(s)
+INFO  [18:08:08.034] [mlr3] Running benchmark with 1 resampling iterations
+INFO  [18:08:08.052] [mlr3] Applying learner 'classif.ranger' on task 'lc1_ae' (iter 1/1)
+Growing trees.. Progress: 25%. Estimated remaining time: 1 minute, 33 seconds.
+Growing trees.. Progress: 50%. Estimated remaining time: 1 minute, 3 seconds.
+Growing trees.. Progress: 74%. Estimated remaining time: 32 seconds.
+Growing trees.. Progress: 99%. Estimated remaining time: 0 seconds.
+INFO  [18:10:20.410] [mlr3] Finished benchmark
+INFO  [18:10:20.451] [bbotk] Result of batch 1:
+INFO  [18:10:20.455] [bbotk]  mtry min.node.size  splitrule classif.wrecall warnings errors runtime_learners
+INFO  [18:10:20.455] [bbotk]    40            10 extratrees       0.2967261        0      0           132.36
+INFO  [18:10:20.455] [bbotk]                                 uhash
+INFO  [18:10:20.455] [bbotk]  0cd901e1-b7ba-4533-8ebb-0b24113f302e
+INFO  [18:10:20.487] [bbotk] Finished optimizing after 1 evaluation(s)
+INFO  [18:10:20.489] [bbotk] Result:
+INFO  [18:10:20.493] [bbotk]   mtry min.node.size  splitrule learner_param_vals  x_domain classif.wrecall
+INFO  [18:10:20.493] [bbotk]  <int>         <int>     <char>             <list>    <list>           <num>
+INFO  [18:10:20.493] [bbotk]     40            10 extratrees          <list[9]> <list[3]>       0.2967261
+Growing trees.. Progress: 15%. Estimated remaining time: 3 minutes, 0 seconds.
+Growing trees.. Progress: 29%. Estimated remaining time: 2 minutes, 30 seconds.
+Growing trees.. Progress: 43%. Estimated remaining time: 2 minutes, 1 seconds.
+Growing trees.. Progress: 57%. Estimated remaining time: 1 minute, 32 seconds.
+Growing trees.. Progress: 71%. Estimated remaining time: 1 minute, 4 seconds.
+Growing trees.. Progress: 85%. Estimated remaining time: 33 seconds.
+Growing trees.. Progress: 99%. Estimated remaining time: 2 seconds.
+INFO  [18:14:10.183] [mlr3] Applying learner 'encode.classbalancing.classif.xgboost.tuned' on task 'lc1_ae' (iter 1/5)
+INFO  [18:14:10.352] [bbotk] Starting to optimize 6 parameter(s) with '<OptimizerBatchRandomSearch>' and '<TerminatorEvals> [n_evals=1, k=0]'
+INFO  [18:14:10.476] [bbotk] Evaluating 1 configuration(s)
+INFO  [18:14:10.486] [mlr3] Running benchmark with 1 resampling iterations
+INFO  [18:14:10.507] [mlr3] Applying learner 'encode.classbalancing.classif.xgboost' on task 'lc1_ae' (iter 1/1)
+INFO  [18:16:18.637] [mlr3] Finished benchmark
+INFO  [18:16:18.685] [bbotk] Result of batch 1:
+INFO  [18:16:18.690] [bbotk]  classif.xgboost.eta classif.xgboost.max_depth classif.xgboost.min_child_weight
+INFO  [18:16:18.690] [bbotk]           0.08488195                        12                                3
+INFO  [18:16:18.690] [bbotk]  classif.xgboost.subsample classif.xgboost.colsample_bytree
+INFO  [18:16:18.690] [bbotk]                  0.9593212                        0.8645536
+INFO  [18:16:18.690] [bbotk]  classif.xgboost.nrounds classif.wrecall warnings errors runtime_learners
+INFO  [18:16:18.690] [bbotk]                     1095       0.3367664        0      0           128.11
+INFO  [18:16:18.690] [bbotk]                                 uhash
+INFO  [18:16:18.690] [bbotk]  ff23d0d7-4ca1-4e75-a8fd-4fc55cac6258
+INFO  [18:16:18.736] [bbotk] Finished optimizing after 1 evaluation(s)
+INFO  [18:16:18.738] [bbotk] Result:
+INFO  [18:16:18.742] [bbotk]  classif.xgboost.eta classif.xgboost.max_depth classif.xgboost.min_child_weight
+INFO  [18:16:18.742] [bbotk]                <num>                     <int>                            <int>
+INFO  [18:16:18.742] [bbotk]           0.08488195                        12                                3
+INFO  [18:16:18.742] [bbotk]  classif.xgboost.subsample classif.xgboost.colsample_bytree
+INFO  [18:16:18.742] [bbotk]                      <num>                            <num>
+INFO  [18:16:18.742] [bbotk]                  0.9593212                        0.8645536
+INFO  [18:16:18.742] [bbotk]  classif.xgboost.nrounds learner_param_vals  x_domain classif.wrecall
+INFO  [18:16:18.742] [bbotk]                    <int>             <list>    <list>           <num>
+INFO  [18:16:18.742] [bbotk]                     1095         <list[18]> <list[6]>       0.3367664
+INFO  [18:19:21.919] [mlr3] Applying learner 'encode.classbalancing.classif.xgboost.tuned' on task 'lc1_ae' (iter 2/5)
+INFO  [18:19:22.037] [bbotk] Starting to optimize 6 parameter(s) with '<OptimizerBatchRandomSearch>' and '<TerminatorEvals> [n_evals=1, k=0]'
+INFO  [18:19:22.114] [bbotk] Evaluating 1 configuration(s)
+INFO  [18:19:22.125] [mlr3] Running benchmark with 1 resampling iterations
+INFO  [18:19:22.144] [mlr3] Applying learner 'encode.classbalancing.classif.xgboost' on task 'lc1_ae' (iter 1/1)
+INFO  [18:22:09.628] [mlr3] Finished benchmark
+INFO  [18:22:09.676] [bbotk] Result of batch 1:
+INFO  [18:22:09.682] [bbotk]  classif.xgboost.eta classif.xgboost.max_depth classif.xgboost.min_child_weight
+INFO  [18:22:09.682] [bbotk]            0.0348871                         9                                1
+INFO  [18:22:09.682] [bbotk]  classif.xgboost.subsample classif.xgboost.colsample_bytree
+INFO  [18:22:09.682] [bbotk]                  0.8240115                          0.69277
+INFO  [18:22:09.682] [bbotk]  classif.xgboost.nrounds classif.wrecall warnings errors runtime_learners
+INFO  [18:22:09.682] [bbotk]                      925       0.3507705        0      0           167.47
+INFO  [18:22:09.682] [bbotk]                                 uhash
+INFO  [18:22:09.682] [bbotk]  21519c8a-561e-46b4-bcdc-6aa4898dde7e
+INFO  [18:22:09.729] [bbotk] Finished optimizing after 1 evaluation(s)
+INFO  [18:22:09.732] [bbotk] Result:
+INFO  [18:22:09.736] [bbotk]  classif.xgboost.eta classif.xgboost.max_depth classif.xgboost.min_child_weight
+INFO  [18:22:09.736] [bbotk]                <num>                     <int>                            <int>
+INFO  [18:22:09.736] [bbotk]            0.0348871                         9                                1
+INFO  [18:22:09.736] [bbotk]  classif.xgboost.subsample classif.xgboost.colsample_bytree
+INFO  [18:22:09.736] [bbotk]                      <num>                            <num>
+INFO  [18:22:09.736] [bbotk]                  0.8240115                          0.69277
+INFO  [18:22:09.736] [bbotk]  classif.xgboost.nrounds learner_param_vals  x_domain classif.wrecall
+INFO  [18:22:09.736] [bbotk]                    <int>             <list>    <list>           <num>
+INFO  [18:22:09.736] [bbotk]                      925         <list[18]> <list[6]>       0.3507705
+INFO  [18:25:59.031] [mlr3] Applying learner 'encode.classbalancing.classif.xgboost.tuned' on task 'lc1_ae' (iter 3/5)
+INFO  [18:25:59.155] [bbotk] Starting to optimize 6 parameter(s) with '<OptimizerBatchRandomSearch>' and '<TerminatorEvals> [n_evals=1, k=0]'
+INFO  [18:25:59.244] [bbotk] Evaluating 1 configuration(s)
+INFO  [18:25:59.255] [mlr3] Running benchmark with 1 resampling iterations
+INFO  [18:25:59.275] [mlr3] Applying learner 'encode.classbalancing.classif.xgboost' on task 'lc1_ae' (iter 1/1)
+INFO  [18:26:45.255] [mlr3] Finished benchmark
+INFO  [18:26:45.304] [bbotk] Result of batch 1:
+INFO  [18:26:45.308] [bbotk]  classif.xgboost.eta classif.xgboost.max_depth classif.xgboost.min_child_weight
+INFO  [18:26:45.308] [bbotk]            0.2971597                        11                                8
+INFO  [18:26:45.308] [bbotk]  classif.xgboost.subsample classif.xgboost.colsample_bytree
+INFO  [18:26:45.308] [bbotk]                  0.8375582                        0.8188351
+INFO  [18:26:45.308] [bbotk]  classif.xgboost.nrounds classif.wrecall warnings errors runtime_learners
+INFO  [18:26:45.308] [bbotk]                      538       0.3413612        0      0            45.96
+INFO  [18:26:45.308] [bbotk]                                 uhash
+INFO  [18:26:45.308] [bbotk]  1373e8ac-a224-461b-823f-dd96a9e56504
+INFO  [18:26:45.352] [bbotk] Finished optimizing after 1 evaluation(s)
+INFO  [18:26:45.355] [bbotk] Result:
+INFO  [18:26:45.359] [bbotk]  classif.xgboost.eta classif.xgboost.max_depth classif.xgboost.min_child_weight
+INFO  [18:26:45.359] [bbotk]                <num>                     <int>                            <int>
+INFO  [18:26:45.359] [bbotk]            0.2971597                        11                                8
+INFO  [18:26:45.359] [bbotk]  classif.xgboost.subsample classif.xgboost.colsample_bytree
+INFO  [18:26:45.359] [bbotk]                      <num>                            <num>
+INFO  [18:26:45.359] [bbotk]                  0.8375582                        0.8188351
+INFO  [18:26:45.359] [bbotk]  classif.xgboost.nrounds learner_param_vals  x_domain classif.wrecall
+INFO  [18:26:45.359] [bbotk]                    <int>             <list>    <list>           <num>
+INFO  [18:26:45.359] [bbotk]                      538         <list[18]> <list[6]>       0.3413612
+INFO  [18:27:57.686] [mlr3] Applying learner 'encode.classbalancing.classif.xgboost.tuned' on task 'lc1_ae' (iter 4/5)
+INFO  [18:27:57.815] [bbotk] Starting to optimize 6 parameter(s) with '<OptimizerBatchRandomSearch>' and '<TerminatorEvals> [n_evals=1, k=0]'
+INFO  [18:27:57.900] [bbotk] Evaluating 1 configuration(s)
+INFO  [18:27:57.911] [mlr3] Running benchmark with 1 resampling iterations
+INFO  [18:27:57.931] [mlr3] Applying learner 'encode.classbalancing.classif.xgboost' on task 'lc1_ae' (iter 1/1)
+INFO  [18:28:36.443] [mlr3] Finished benchmark
+INFO  [18:28:36.490] [bbotk] Result of batch 1:
+INFO  [18:28:36.494] [bbotk]  classif.xgboost.eta classif.xgboost.max_depth classif.xgboost.min_child_weight
+INFO  [18:28:36.494] [bbotk]            0.2176243                        10                                8
+INFO  [18:28:36.494] [bbotk]  classif.xgboost.subsample classif.xgboost.colsample_bytree
+INFO  [18:28:36.494] [bbotk]                  0.6944768                        0.9025433
+INFO  [18:28:36.494] [bbotk]  classif.xgboost.nrounds classif.wrecall warnings errors runtime_learners
+INFO  [18:28:36.494] [bbotk]                      383       0.3619614        0      0             38.5
+INFO  [18:28:36.494] [bbotk]                                 uhash
+INFO  [18:28:36.494] [bbotk]  01958599-1b46-4be5-99d8-24ba966662d0
+INFO  [18:28:36.537] [bbotk] Finished optimizing after 1 evaluation(s)
+INFO  [18:28:36.539] [bbotk] Result:
+INFO  [18:28:36.543] [bbotk]  classif.xgboost.eta classif.xgboost.max_depth classif.xgboost.min_child_weight
+INFO  [18:28:36.543] [bbotk]                <num>                     <int>                            <int>
+INFO  [18:28:36.543] [bbotk]            0.2176243                        10                                8
+INFO  [18:28:36.543] [bbotk]  classif.xgboost.subsample classif.xgboost.colsample_bytree
+INFO  [18:28:36.543] [bbotk]                      <num>                            <num>
+INFO  [18:28:36.543] [bbotk]                  0.6944768                        0.9025433
+INFO  [18:28:36.543] [bbotk]  classif.xgboost.nrounds learner_param_vals  x_domain classif.wrecall
+INFO  [18:28:36.543] [bbotk]                    <int>             <list>    <list>           <num>
+INFO  [18:28:36.543] [bbotk]                      383         <list[18]> <list[6]>       0.3619614
+INFO  [18:29:32.476] [mlr3] Applying learner 'encode.classbalancing.classif.xgboost.tuned' on task 'lc1_ae' (iter 5/5)
+INFO  [18:29:32.593] [bbotk] Starting to optimize 6 parameter(s) with '<OptimizerBatchRandomSearch>' and '<TerminatorEvals> [n_evals=1, k=0]'
+INFO  [18:29:32.669] [bbotk] Evaluating 1 configuration(s)
+INFO  [18:29:32.679] [mlr3] Running benchmark with 1 resampling iterations
+INFO  [18:29:32.698] [mlr3] Applying learner 'encode.classbalancing.classif.xgboost' on task 'lc1_ae' (iter 1/1)
+INFO  [18:30:02.032] [mlr3] Finished benchmark
+INFO  [18:30:02.082] [bbotk] Result of batch 1:
+INFO  [18:30:02.087] [bbotk]  classif.xgboost.eta classif.xgboost.max_depth classif.xgboost.min_child_weight
+INFO  [18:30:02.087] [bbotk]             0.232324                        12                                7
+INFO  [18:30:02.087] [bbotk]  classif.xgboost.subsample classif.xgboost.colsample_bytree
+INFO  [18:30:02.087] [bbotk]                  0.8232578                        0.8565532
+INFO  [18:30:02.087] [bbotk]  classif.xgboost.nrounds classif.wrecall warnings errors runtime_learners
+INFO  [18:30:02.087] [bbotk]                      223       0.3503025        0      0            29.31
+INFO  [18:30:02.087] [bbotk]                                 uhash
+INFO  [18:30:02.087] [bbotk]  685c7149-29ef-4590-b331-3359c3501131
+INFO  [18:30:02.131] [bbotk] Finished optimizing after 1 evaluation(s)
+INFO  [18:30:02.134] [bbotk] Result:
+INFO  [18:30:02.138] [bbotk]  classif.xgboost.eta classif.xgboost.max_depth classif.xgboost.min_child_weight
+INFO  [18:30:02.138] [bbotk]                <num>                     <int>                            <int>
+INFO  [18:30:02.138] [bbotk]             0.232324                        12                                7
+INFO  [18:30:02.138] [bbotk]  classif.xgboost.subsample classif.xgboost.colsample_bytree
+INFO  [18:30:02.138] [bbotk]                      <num>                            <num>
+INFO  [18:30:02.138] [bbotk]                  0.8232578                        0.8565532
+INFO  [18:30:02.138] [bbotk]  classif.xgboost.nrounds learner_param_vals  x_domain classif.wrecall
+INFO  [18:30:02.138] [bbotk]                    <int>             <list>    <list>           <num>
+INFO  [18:30:02.138] [bbotk]                      223         <list[18]> <list[6]>       0.3503025
+INFO  [18:30:45.732] [mlr3] Finished benchmark
+> 
+> cat("\n--- Metriche CV (media ± sd) ---\n")
+
+--- Metriche CV (media ± sd) ---
+> measures <- list(msr("classif.acc"), msr("classif.bacc"), msr_wrecall)
+> print(bmr$aggregate(measures))
+      nr task_id                                  learner_id resampling_id
+   <int>  <char>                                      <char>        <char>
+1:     1  lc1_ae                        classif.ranger.tuned            cv
+2:     2  lc1_ae encode.classbalancing.classif.xgboost.tuned            cv
+   iters classif.acc classif.bacc classif.wrecall
+   <int>       <num>        <num>           <num>
+1:     5   0.7298446    0.4373588       0.3031589
+2:     5   0.7437252    0.4794002       0.3560433
+Hidden columns: resample_result
+> 
+> save.image(file = file.path(datapath, "temp.RData"))
+> 
+> # ---------------------------
+> # 6) Predizioni CV → CM
+> # ---------------------------
+> get_cm_from_bmr <- function(bmr, learner_or_id) {
++   desired_id <- if (inherits(learner_or_id, "Learner")) learner_or_id$id else as.character(learner_or_id)
++   dt <- data.table::as.data.table(bmr)
++   uh <- unique(dt[learner_id == desired_id, uhash])
++   if (length(uh) == 0L) {
++     avail <- unique(dt$learner_id)
++     stop(sprintf("Nessuna riga per learner_id='%s'. Learner disponibili: %s",
++                  desired_id, paste(avail, collapse = ", ")))
++   }
++   rr_tab <- bmr$resample_results
++   rr_row <- rr_tab[uhash == uh[1L]]
++   if (nrow(rr_row) == 0L) stop("ResampleResult non trovato per uhash: ", uh[1L])
++   rr <- rr_row$resample_result[[1L]]
++   pred <- rr$prediction()
++   cm  <- table(pred$truth, pred$response, useNA = "no")
++   cmn <- sweep(cm, 1, pmax(rowSums(cm), 1), "/")
++   list(cm = cm, cmn = cmn, pred = pred)
++ }
+> 
+> # Usa gli oggetti AutoTuner per evitare mismatch dell'id
+> cm_rf  <- get_cm_from_bmr(bmr, at_rf)
+> cm_xgb <- get_cm_from_bmr(bmr, at_xgb)
+> 
+> cat("\n-- RF CM (prima del threshold tuning) --\n");  print(addmargins(cm_rf$cm))
+
+-- RF CM (prima del threshold tuning) --
+     
+          A     B     C     D     E     F     G     H   Sum
+  A    1596   347   244     3   164     4     3     1  2362
+  B     142  6221   667     8   705     0     1     1  7745
+  C     105   255 10527    41   371     2     2     0 11303
+  D      43   165   713    50   329     2     0     0  1302
+  E     231  1531   992    17  1967    24     2     1  4765
+  F      59   101    33     1    65   128     2     0   389
+  G      40    72    27     1    24     8    69     2   243
+  H       2    29    10     0     7     1    10     1    60
+  Sum  2218  8721 13213   121  3632   169    89     6 28169
+> cat("\n-- XGB CM (prima del threshold tuning) --\n"); print(addmargins(cm_xgb$cm))
+
+-- XGB CM (prima del threshold tuning) --
+     
+          A     B     C     D     E     F     G     H   Sum
+  A    1620   301   183    16   234     2     4     2  2362
+  B     127  6248   453    23   890     1     2     1  7745
+  C     112   276 10421    83   408     2     1     0 11303
+  D      38   160   659   100   341     1     0     3  1302
+  E     236  1389   696    75  2335    25     2     7  4765
+  F      43   100    31     4    69   136     4     2   389
+  G      25    61    18     3    43     9    78     6   243
+  H       5    22     9     0     6     2     4    12    60
+  Sum  2206  8557 12470   304  4326   178    95    33 28169
+> 
+> # ---------------------------
+> # 7) Heatmap ggplot della CM normalizzata
+> # ---------------------------
+> plot_cm <- function(cmn, title = "Confusion Matrix (normalized)") {
++   stopifnot(is.matrix(cmn))
++   if (is.null(rownames(cmn))) rownames(cmn) <- sprintf("R%d", seq_len(nrow(cmn)))
++   if (is.null(colnames(cmn))) colnames(cmn) <- sprintf("C%d", seq_len(ncol(cmn)))
++   Truth <- rep(rownames(cmn), times = ncol(cmn))
++   Pred  <- rep(colnames(cmn), each  = nrow(cmn))
++   Val   <- as.numeric(cmn)
++   long <- data.frame(Truth = factor(Truth, levels = rownames(cmn)),
++                      Pred  = factor(Pred,  levels = colnames(cmn)),
++                      Val   = Val,
++                      check.names = FALSE)
++   ggplot(long, aes(x = Pred, y = Truth, fill = Val)) +
++     geom_tile() +
++     geom_text(aes(label = sprintf("%.2f", Val)), size = 3) +
++     scale_fill_gradient(low = "white", high = "steelblue") +
++     labs(title = title, x = "Predicted", y = "True") +
++     theme_minimal()
++ }
+> print(plot_cm(cm_rf$cmn,  paste0(at_rf$id,  " — CM normalizzata")))
+Messaggio di avvertimento:
+In grid.newpage() :
+  Non è possibile aprire il file temporaneo 'C:\Users\Giulio\AppData\Local\Temp\Rtmp6vmYVL\pdf47801e2045f' per la compressione (motivo: No such file or directory); la compressione è stata disabilitata per questo dispositivo
+> print(plot_cm(cm_xgb$cmn, paste0(at_xgb$id, " — CM normalizzata")))
+> 
+> # ---------------------------
+> # 8) Macro-F1 "pooled" + recall per classe
+> # ---------------------------
+> macro_f1_manual <- function(pred) {
++   cm <- table(pred$truth, pred$response)
++   k  <- nrow(cm)
++   f1 <- numeric(k)
++   for (i in seq_len(k)) {
++     tp   <- cm[i, i]
++     fp   <- sum(cm[-i, i])
++     fn   <- sum(cm[i, -i])
++     prec <- if ((tp + fp) == 0) NA else tp / (tp + fp)
++     rec  <- if ((tp + fn) == 0) NA else tp / (tp + fn)
++     f1[i] <- if (is.na(prec) || is.na(rec) || (prec + rec) == 0) NA else 2 * prec * rec / (prec + rec)
++   }
++   mean(f1, na.rm = TRUE)
++ }
+> rf_macro_f1  <- macro_f1_manual(cm_rf$pred)
+> xgb_macro_f1 <- macro_f1_manual(cm_xgb$pred)
+> cat("\nMacro-F1 (pooled): RF =", rf_macro_f1, " | XGB =", xgb_macro_f1, "\n")
+
+Macro-F1 (pooled): RF = 0.4693586  | XGB = 0.5237589 
+> 
+> per_class_recall <- function(cmn) data.table(classe = rownames(cmn), recall = round(diag(cmn), 3))
+> ba_rf_per_class  <- per_class_recall(cm_rf$cmn)
+> ba_xgb_per_class <- per_class_recall(cm_xgb$cmn)
+> print(ba_rf_per_class)
+   classe recall
+   <char>  <num>
+1:      A  0.676
+2:      B  0.803
+3:      C  0.931
+4:      D  0.038
+5:      E  0.413
+6:      F  0.329
+7:      G  0.284
+8:      H  0.017
+> print(ba_xgb_per_class)
+   classe recall
+   <char>  <num>
+1:      A  0.686
+2:      B  0.807
+3:      C  0.922
+4:      D  0.077
+5:      E  0.490
+6:      F  0.350
+7:      G  0.321
+8:      H  0.200
+> 
+> # ---------------------------
+> # 9) Threshold tuning post-hoc (semplice, con riscalatura in [0,1])
+> # ---------------------------
+> rescale_thresholds01 <- function(th) {
++   d <- max(1, max(th, na.rm = TRUE))
++   th / d
++ }
+> threshold_tune <- function(pred, th_vec) {
++   if (is.null(pred$prob)) stop("Servono probabilità (predict_type='prob').")
++   pr2 <- pred$clone(deep = TRUE)
++   pr2$set_threshold(rescale_thresholds01(th_vec))
++   cm  <- table(pr2$truth, pr2$response)
++   cmn <- sweep(cm, 1, pmax(rowSums(cm), 1), "/")
++   list(pred = pr2, cm = cm, cmn = cmn)
++ }
+> rf_th  <- threshold_tune(cm_rf$pred,  thresh_vec)
+> xgb_th <- threshold_tune(cm_xgb$pred, thresh_vec)
+> 
+> cat("\n-- RF CM (dopo soglie semplici) --\n");  print(addmargins(rf_th$cm))
+
+-- RF CM (dopo soglie semplici) --
+     
+          A     B     C     D     E     F     G     H   Sum
+  A    1587   342   237    22   160     8     5     1  2362
+  B     141  6210   658    39   693     1     2     1  7745
+  C     100   250 10456   138   351     6     2     0 11303
+  D      42   158   678   122   295     4     0     3  1302
+  E     230  1519   973    92  1910    36     4     1  4765
+  F      51   101    30     6    54   141     6     0   389
+  G      33    70    25     5    23     8    77     2   243
+  H       0    28     9     2     6     2    12     1    60
+  Sum  2184  8678 13066   426  3492   206   108     9 28169
+> cat("\n-- XGB CM (dopo soglie semplici) --\n"); print(addmargins(xgb_th$cm))
+
+-- XGB CM (dopo soglie semplici) --
+     
+          A     B     C     D     E     F     G     H   Sum
+  A    1616   301   182    19   232     3     6     3  2362
+  B     127  6245   449    31   887     2     3     1  7745
+  C     112   273 10400   113   400     3     2     0 11303
+  D      36   155   636   139   330     3     0     3  1302
+  E     234  1384   688   110  2307    26     4    12  4765
+  F      42   100    31     5    65   140     4     2   389
+  G      24    59    18     4    43     9    80     6   243
+  H       5    20     8     1     6     2     4    14    60
+  Sum  2196  8537 12412   422  4270   188   103    41 28169
+> cat("\n-- Recall per classe (RF dopo soglie) --\n");  print(per_class_recall(rf_th$cmn))
+
+-- Recall per classe (RF dopo soglie) --
+   classe recall
+   <char>  <num>
+1:      A  0.672
+2:      B  0.802
+3:      C  0.925
+4:      D  0.094
+5:      E  0.401
+6:      F  0.362
+7:      G  0.317
+8:      H  0.017
+> cat("\n-- Recall per classe (XGB dopo soglie) --\n"); print(per_class_recall(xgb_th$cmn))
+
+-- Recall per classe (XGB dopo soglie) --
+   classe recall
+   <char>  <num>
+1:      A  0.684
+2:      B  0.806
+3:      C  0.920
+4:      D  0.107
+5:      E  0.484
+6:      F  0.360
+7:      G  0.329
+8:      H  0.233
+> 
+> # ---------------------------
+> # 10) Equalizzazione dei margini (soglie “pronte mlr3”)
+> # ---------------------------
+> threshold_equalize_marginals <- function(pred,
++                                          target = c("truth","custom"),
++                                          target_vec = NULL,
++                                          eta = 0.5, tol = 0.01, max_iter = 50,
++                                          min_w = 1e-3, max_w = 1e3) {
++   if (is.null(pred$prob)) stop("Servono probabilità (predict_type='prob').")
++   probs   <- as.matrix(pred$prob)
++   classes <- colnames(probs)
++   truth   <- factor(pred$truth, levels = classes)
++   N <- nrow(probs); K <- ncol(probs); eps <- 1e-9
++   
++   target <- match.arg(target)
++   if (target == "truth") {
++     T_counts <- as.numeric(table(truth)); names(T_counts) <- classes
++   } else {
++     stopifnot(!is.null(target_vec), length(target_vec) == K)
++     if (abs(sum(target_vec) - 1) < 1e-6) T_counts <- as.numeric(target_vec) * N else T_counts <- as.numeric(target_vec)
++     names(T_counts) <- classes
++   }
++   T_counts[T_counts < 1] <- 1
++   
++   w <- setNames(rep(1, K), classes)
++   predict_with_w <- function(P, w) {
++     scores <- sweep(P, 2, w, "*")
++     idx <- max.col(scores, ties.method = "first")
++     factor(classes[idx], levels = classes)
++   }
++   
++   iters <- 0L
++   repeat {
++     iters <- iters + 1L
++     pred_lab <- predict_with_w(probs, w)
++     C_counts <- as.numeric(table(factor(pred_lab, levels = classes)))
++     names(C_counts) <- classes
++     rel_gap <- max(abs(C_counts - T_counts) / pmax(T_counts, 1))
++     if (rel_gap <= tol || iters >= max_iter) break
++     ratio <- (T_counts + eps) / (C_counts + eps)
++     w <- pmin(pmax(w * (ratio ^ eta), min_w), max_w)
++   }
++   
++   final_pred <- predict_with_w(probs, w)
++   cm  <- table(truth, final_pred)
++   cmn <- sweep(cm, 1, pmax(rowSums(cm), 1), "/")
++   
++   th_raw  <- setNames(as.numeric(mean(w) / w), classes)
++   scale_den <- max(1, max(th_raw, na.rm = TRUE))
++   th_mlr3 <- th_raw / scale_den
++   th_mlr3[!is.finite(th_mlr3)] <- 1e-6
++   
++   list(weights = w,
++        thresholds_raw  = th_raw,
++        thresholds_mlr3 = th_mlr3,
++        iterations = iters,
++        response = final_pred,
++        cm = cm, cmn = cmn)
++ }
+> 
+> eq_rf  <- threshold_equalize_marginals(cm_rf$pred,  target = "truth", eta = 0.6, tol = 0.01)
+> eq_xgb <- threshold_equalize_marginals(cm_xgb$pred, target = "truth", eta = 0.6, tol = 0.01)
+> 
+> p_rf_eq  <- cm_rf$pred$clone(deep=TRUE);  p_rf_eq$set_threshold(eq_rf$thresholds_mlr3)
+> p_xgb_eq <- cm_xgb$pred$clone(deep=TRUE); p_xgb_eq$set_threshold(eq_xgb$thresholds_mlr3)
+> 
+> cat("\n-- RF CM (dopo equalizzazione) --\n");  print(addmargins(table(p_rf_eq$truth,  p_rf_eq$response)))
+
+-- RF CM (dopo equalizzazione) --
+     
+          A     B     C     D     E     F     G     H   Sum
+  A    1630   251   146    56   208    31    28    12  2362
+  B     199  5817   394   146  1125    23    34     7  7745
+  C     134   214  9739   544   626    20    15    11 11303
+  D      53   114   448   299   353    24     6     5  1302
+  E     271  1177   563   236  2364   109    29    16  4765
+  F      44    88    21    10    51   165    10     0   389
+  G      21    47    13    10    28    13   105     6   243
+  H       0    23     8     2     8     1    15     3    60
+  Sum  2352  7731 11332  1303  4763   386   242    60 28169
+> cat("\n-- XGB CM (dopo equalizzazione) --\n"); print(addmargins(table(p_xgb_eq$truth, p_xgb_eq$response)))
+
+-- XGB CM (dopo equalizzazione) --
+     
+          A     B     C     D     E     F     G     H   Sum
+  A    1656   224   126    52   245    25    29     5  2362
+  B     162  5888   340   138  1132    39    39     7  7745
+  C     145   245  9949   455   478    15    14     2 11303
+  D      38   106   463   324   325    27    12     7  1302
+  E     276  1089   476   308  2472    98    30    16  4765
+  F      41    86    20    15    50   167     9     1   389
+  G      18    43    15     6    39    15   102     5   243
+  H       5    14     4     5     7     2     6    17    60
+  Sum  2341  7695 11393  1303  4748   388   241    60 28169
+> 
+> # ---------------------------
+> # 11) Salvataggi
+> # ---------------------------
+> saveRDS(at_rf,  file = file.path(datapath, "rf.Rds"))
+> saveRDS(at_xgb, file = file.path(datapath, "xgb.Rds"))
+> 
+> at_rf$train(task)
+INFO  [18:30:51.637] [bbotk] Starting to optimize 3 parameter(s) with '<OptimizerBatchRandomSearch>' and '<TerminatorEvals> [n_evals=1, k=0]'
+INFO  [18:30:51.677] [bbotk] Evaluating 1 configuration(s)
+INFO  [18:30:51.687] [mlr3] Running benchmark with 1 resampling iterations
+INFO  [18:30:51.705] [mlr3] Applying learner 'classif.ranger' on task 'lc1_ae' (iter 1/1)
+Growing trees.. Progress: 3%. Estimated remaining time: 16 minutes, 42 seconds.
+Growing trees.. Progress: 6%. Estimated remaining time: 16 minutes, 11 seconds.
+Growing trees.. Progress: 9%. Estimated remaining time: 15 minutes, 41 seconds.
+Growing trees.. Progress: 12%. Estimated remaining time: 15 minutes, 9 seconds.
+Growing trees.. Progress: 15%. Estimated remaining time: 14 minutes, 37 seconds.
+Growing trees.. Progress: 19%. Estimated remaining time: 14 minutes, 1 seconds.
+Growing trees.. Progress: 22%. Estimated remaining time: 13 minutes, 30 seconds.
+Growing trees.. Progress: 25%. Estimated remaining time: 12 minutes, 59 seconds.
+Growing trees.. Progress: 28%. Estimated remaining time: 12 minutes, 27 seconds.
+Growing trees.. Progress: 31%. Estimated remaining time: 11 minutes, 53 seconds.
+Growing trees.. Progress: 34%. Estimated remaining time: 11 minutes, 24 seconds.
+Growing trees.. Progress: 37%. Estimated remaining time: 10 minutes, 50 seconds.
+Growing trees.. Progress: 40%. Estimated remaining time: 10 minutes, 19 seconds.
+Growing trees.. Progress: 43%. Estimated remaining time: 9 minutes, 45 seconds.
+Growing trees.. Progress: 46%. Estimated remaining time: 9 minutes, 15 seconds.
+Growing trees.. Progress: 49%. Estimated remaining time: 8 minutes, 41 seconds.
+Growing trees.. Progress: 53%. Estimated remaining time: 8 minutes, 9 seconds.
+Growing trees.. Progress: 56%. Estimated remaining time: 7 minutes, 36 seconds.
+Growing trees.. Progress: 59%. Estimated remaining time: 7 minutes, 3 seconds.
+Growing trees.. Progress: 62%. Estimated remaining time: 6 minutes, 32 seconds.
+Growing trees.. Progress: 65%. Estimated remaining time: 5 minutes, 59 seconds.
+Growing trees.. Progress: 68%. Estimated remaining time: 5 minutes, 27 seconds.
+Growing trees.. Progress: 72%. Estimated remaining time: 4 minutes, 52 seconds.
+Growing trees.. Progress: 75%. Estimated remaining time: 4 minutes, 17 seconds.
+Growing trees.. Progress: 78%. Estimated remaining time: 3 minutes, 42 seconds.
+Growing trees.. Progress: 82%. Estimated remaining time: 3 minutes, 8 seconds.
+Growing trees.. Progress: 85%. Estimated remaining time: 2 minutes, 34 seconds.
+Growing trees.. Progress: 88%. Estimated remaining time: 1 minute, 59 seconds.
+Growing trees.. Progress: 92%. Estimated remaining time: 1 minute, 26 seconds.
+Growing trees.. Progress: 95%. Estimated remaining time: 52 seconds.
+Growing trees.. Progress: 98%. Estimated remaining time: 18 seconds.
+INFO  [18:47:51.566] [mlr3] Finished benchmark
+INFO  [18:47:51.608] [bbotk] Result of batch 1:
+INFO  [18:47:51.612] [bbotk]  mtry min.node.size splitrule classif.wrecall warnings errors runtime_learners
+INFO  [18:47:51.612] [bbotk]    43             4      gini       0.2829995        0      0          1019.86
+INFO  [18:47:51.612] [bbotk]                                 uhash
+INFO  [18:47:51.612] [bbotk]  a72c45f1-d49e-4652-9585-bde2d38bd8bc
+INFO  [18:47:51.644] [bbotk] Finished optimizing after 1 evaluation(s)
+INFO  [18:47:51.647] [bbotk] Result:
+INFO  [18:47:51.650] [bbotk]   mtry min.node.size splitrule learner_param_vals  x_domain classif.wrecall
+INFO  [18:47:51.650] [bbotk]  <int>         <int>    <char>             <list>    <list>           <num>
+INFO  [18:47:51.650] [bbotk]     43             4      gini          <list[9]> <list[3]>       0.2829995
+Growing trees.. Progress: 2%. Estimated remaining time: 26 minutes, 8 seconds.
+Growing trees.. Progress: 4%. Estimated remaining time: 26 minutes, 0 seconds.
+Growing trees.. Progress: 6%. Estimated remaining time: 25 minutes, 35 seconds.
+Growing trees.. Progress: 8%. Estimated remaining time: 25 minutes, 6 seconds.
+Growing trees.. Progress: 10%. Estimated remaining time: 24 minutes, 54 seconds.
+Growing trees.. Progress: 12%. Estimated remaining time: 24 minutes, 20 seconds.
+Growing trees.. Progress: 14%. Estimated remaining time: 23 minutes, 46 seconds.
+Growing trees.. Progress: 16%. Estimated remaining time: 23 minutes, 12 seconds.
+Growing trees.. Progress: 18%. Estimated remaining time: 22 minutes, 39 seconds.
+Growing trees.. Progress: 20%. Estimated remaining time: 22 minutes, 5 seconds.
+Growing trees.. Progress: 22%. Estimated remaining time: 21 minutes, 36 seconds.
+Growing trees.. Progress: 24%. Estimated remaining time: 21 minutes, 2 seconds.
+Growing trees.. Progress: 26%. Estimated remaining time: 20 minutes, 28 seconds.
+Growing trees.. Progress: 28%. Estimated remaining time: 20 minutes, 0 seconds.
+Growing trees.. Progress: 30%. Estimated remaining time: 19 minutes, 26 seconds.
+Growing trees.. Progress: 32%. Estimated remaining time: 18 minutes, 52 seconds.
+Growing trees.. Progress: 34%. Estimated remaining time: 18 minutes, 19 seconds.
+Growing trees.. Progress: 36%. Estimated remaining time: 17 minutes, 46 seconds.
+Growing trees.. Progress: 38%. Estimated remaining time: 17 minutes, 12 seconds.
+Growing trees.. Progress: 40%. Estimated remaining time: 16 minutes, 39 seconds.
+Growing trees.. Progress: 42%. Estimated remaining time: 16 minutes, 5 seconds.
+Growing trees.. Progress: 44%. Estimated remaining time: 15 minutes, 34 seconds.
+Growing trees.. Progress: 46%. Estimated remaining time: 15 minutes, 0 seconds.
+Growing trees.. Progress: 48%. Estimated remaining time: 14 minutes, 27 seconds.
+Growing trees.. Progress: 50%. Estimated remaining time: 13 minutes, 54 seconds.
+Growing trees.. Progress: 52%. Estimated remaining time: 13 minutes, 20 seconds.
+Growing trees.. Progress: 54%. Estimated remaining time: 12 minutes, 48 seconds.
+Growing trees.. Progress: 56%. Estimated remaining time: 12 minutes, 15 seconds.
+Growing trees.. Progress: 58%. Estimated remaining time: 11 minutes, 41 seconds.
+Growing trees.. Progress: 60%. Estimated remaining time: 11 minutes, 9 seconds.
+Growing trees.. Progress: 62%. Estimated remaining time: 10 minutes, 35 seconds.
+Growing trees.. Progress: 64%. Estimated remaining time: 10 minutes, 2 seconds.
+Growing trees.. Progress: 66%. Estimated remaining time: 9 minutes, 29 seconds.
+Growing trees.. Progress: 68%. Estimated remaining time: 8 minutes, 59 seconds.
+Growing trees.. Progress: 70%. Estimated remaining time: 8 minutes, 26 seconds.
+Growing trees.. Progress: 72%. Estimated remaining time: 7 minutes, 53 seconds.
+Growing trees.. Progress: 73%. Estimated remaining time: 7 minutes, 23 seconds.
+Growing trees.. Progress: 75%. Estimated remaining time: 6 minutes, 53 seconds.
+Growing trees.. Progress: 77%. Estimated remaining time: 6 minutes, 23 seconds.
+Growing trees.. Progress: 79%. Estimated remaining time: 5 minutes, 52 seconds.
+Growing trees.. Progress: 81%. Estimated remaining time: 5 minutes, 22 seconds.
+Growing trees.. Progress: 83%. Estimated remaining time: 4 minutes, 49 seconds.
+Growing trees.. Progress: 85%. Estimated remaining time: 4 minutes, 15 seconds.
+Growing trees.. Progress: 87%. Estimated remaining time: 3 minutes, 42 seconds.
+Growing trees.. Progress: 89%. Estimated remaining time: 3 minutes, 9 seconds.
+Growing trees.. Progress: 91%. Estimated remaining time: 2 minutes, 35 seconds.
+Growing trees.. Progress: 93%. Estimated remaining time: 2 minutes, 5 seconds.
+Growing trees.. Progress: 94%. Estimated remaining time: 1 minute, 34 seconds.
+Growing trees.. Progress: 96%. Estimated remaining time: 1 minute, 4 seconds.
+Growing trees.. Progress: 98%. Estimated remaining time: 33 seconds.
+Growing trees.. Progress: 100%. Estimated remaining time: 2 seconds.
+> at_xgb$train(task)
+INFO  [19:15:55.443] [bbotk] Starting to optimize 6 parameter(s) with '<OptimizerBatchRandomSearch>' and '<TerminatorEvals> [n_evals=1, k=0]'
+INFO  [19:15:55.531] [bbotk] Evaluating 1 configuration(s)
+INFO  [19:15:55.544] [mlr3] Running benchmark with 1 resampling iterations
+INFO  [19:15:55.566] [mlr3] Applying learner 'encode.classbalancing.classif.xgboost' on task 'lc1_ae' (iter 1/1)
+INFO  [19:17:44.006] [mlr3] Finished benchmark
+INFO  [19:17:44.055] [bbotk] Result of batch 1:
+INFO  [19:17:44.059] [bbotk]  classif.xgboost.eta classif.xgboost.max_depth classif.xgboost.min_child_weight
+INFO  [19:17:44.059] [bbotk]            0.2031192                        11                                4
+INFO  [19:17:44.059] [bbotk]  classif.xgboost.subsample classif.xgboost.colsample_bytree
+INFO  [19:17:44.059] [bbotk]                   0.851068                        0.7855182
+INFO  [19:17:44.059] [bbotk]  classif.xgboost.nrounds classif.wrecall warnings errors runtime_learners
+INFO  [19:17:44.059] [bbotk]                      995       0.3641355        0      0           108.42
+INFO  [19:17:44.059] [bbotk]                                 uhash
+INFO  [19:17:44.059] [bbotk]  eb4b2047-d390-4ecc-a013-f363122d7219
+INFO  [19:17:44.107] [bbotk] Finished optimizing after 1 evaluation(s)
+INFO  [19:17:44.109] [bbotk] Result:
+INFO  [19:17:44.113] [bbotk]  classif.xgboost.eta classif.xgboost.max_depth classif.xgboost.min_child_weight
+INFO  [19:17:44.113] [bbotk]                <num>                     <int>                            <int>
+INFO  [19:17:44.113] [bbotk]            0.2031192                        11                                4
+INFO  [19:17:44.113] [bbotk]  classif.xgboost.subsample classif.xgboost.colsample_bytree
+INFO  [19:17:44.113] [bbotk]                      <num>                            <num>
+INFO  [19:17:44.113] [bbotk]                   0.851068                        0.7855182
+INFO  [19:17:44.113] [bbotk]  classif.xgboost.nrounds learner_param_vals  x_domain classif.wrecall
+INFO  [19:17:44.113] [bbotk]                    <int>             <list>    <list>           <num>
+INFO  [19:17:44.113] [bbotk]                      995         <list[18]> <list[6]>       0.3641355
+> saveRDS(at_rf$learner,  file = file.path(datapath, "rf_learner.Rds"))
+> saveRDS(at_xgb$learner, file = file.path(datapath, "xgb_learner.Rds"))
+> 
+> save.image(file = file.path(datapath, "run_10_10_wrecall_thresh.RData"))
+> 
+> # Confusion matrix stile caret (opzionale)
+> suppressPackageStartupMessages(library(caret))
+> confusionMatrix(cm_rf$cm);  addmargins(cm_rf$cm)
+Confusion Matrix and Statistics
+
+   
+        A     B     C     D     E     F     G     H
+  A  1596   347   244     3   164     4     3     1
+  B   142  6221   667     8   705     0     1     1
+  C   105   255 10527    41   371     2     2     0
+  D    43   165   713    50   329     2     0     0
+  E   231  1531   992    17  1967    24     2     1
+  F    59   101    33     1    65   128     2     0
+  G    40    72    27     1    24     8    69     2
+  H     2    29    10     0     7     1    10     1
+
+Overall Statistics
+                                         
+               Accuracy : 0.7298         
+                 95% CI : (0.7246, 0.735)
+    No Information Rate : 0.4691         
+    P-Value [Acc > NIR] : < 2.2e-16      
+                                         
+                  Kappa : 0.6129         
+                                         
+ Mcnemar's Test P-Value : NA             
+
+Statistics by Class:
+
+                     Class: A Class: B Class: C Class: D Class: E Class: F
+Sensitivity           0.71957   0.7133   0.7967 0.413223  0.54157 0.757396
+Specificity           0.97048   0.9216   0.9481 0.955362  0.88597 0.990679
+Pos Pred Value        0.67570   0.8032   0.9313 0.038402  0.41280 0.329049
+Neg Pred Value        0.97590   0.8776   0.8407 0.997357  0.92886 0.998524
+Prevalence            0.07874   0.3096   0.4691 0.004296  0.12894 0.006000
+Detection Rate        0.05666   0.2208   0.3737 0.001775  0.06983 0.004544
+Detection Prevalence  0.08385   0.2749   0.4013 0.046221  0.16916 0.013810
+Balanced Accuracy     0.84503   0.8175   0.8724 0.684293  0.71377 0.874038
+                     Class: G  Class: H
+Sensitivity          0.775281 0.1666667
+Specificity          0.993803 0.9979051
+Pos Pred Value       0.283951 0.0166667
+Neg Pred Value       0.999284 0.9998221
+Prevalence           0.003160 0.0002130
+Detection Rate       0.002450 0.0000355
+Detection Prevalence 0.008627 0.0021300
+Balanced Accuracy    0.884542 0.5822859
+     
+          A     B     C     D     E     F     G     H   Sum
+  A    1596   347   244     3   164     4     3     1  2362
+  B     142  6221   667     8   705     0     1     1  7745
+  C     105   255 10527    41   371     2     2     0 11303
+  D      43   165   713    50   329     2     0     0  1302
+  E     231  1531   992    17  1967    24     2     1  4765
+  F      59   101    33     1    65   128     2     0   389
+  G      40    72    27     1    24     8    69     2   243
+  H       2    29    10     0     7     1    10     1    60
+  Sum  2218  8721 13213   121  3632   169    89     6 28169
+> confusionMatrix(cm_xgb$cm); addmargins(cm_xgb$cm)
+Confusion Matrix and Statistics
+
+   
+        A     B     C     D     E     F     G     H
+  A  1620   301   183    16   234     2     4     2
+  B   127  6248   453    23   890     1     2     1
+  C   112   276 10421    83   408     2     1     0
+  D    38   160   659   100   341     1     0     3
+  E   236  1389   696    75  2335    25     2     7
+  F    43   100    31     4    69   136     4     2
+  G    25    61    18     3    43     9    78     6
+  H     5    22     9     0     6     2     4    12
+
+Overall Statistics
+                                          
+               Accuracy : 0.7437          
+                 95% CI : (0.7386, 0.7488)
+    No Information Rate : 0.4427          
+    P-Value [Acc > NIR] : < 2.2e-16       
+                                          
+                  Kappa : 0.6368          
+                                          
+ Mcnemar's Test P-Value : < 2.2e-16       
+
+Statistics by Class:
+
+                     Class: A Class: B Class: C Class: D Class: E Class: F
+Sensitivity           0.73436   0.7302   0.8357  0.32895  0.53976 0.764045
+Specificity           0.97142   0.9237   0.9438  0.95686  0.89808 0.990961
+Pos Pred Value        0.68586   0.8067   0.9220  0.07680  0.49003 0.349614
+Neg Pred Value        0.97729   0.8869   0.8785  0.99241  0.91493 0.998488
+Prevalence            0.07831   0.3038   0.4427  0.01079  0.15357 0.006319
+Detection Rate        0.05751   0.2218   0.3699  0.00355  0.08289 0.004828
+Detection Prevalence  0.08385   0.2749   0.4013  0.04622  0.16916 0.013810
+Balanced Accuracy     0.85289   0.8269   0.8898  0.64291  0.71892 0.877503
+                     Class: G Class: H
+Sensitivity          0.821053 0.363636
+Specificity          0.994123 0.998294
+Pos Pred Value       0.320988 0.200000
+Neg Pred Value       0.999391 0.999253
+Prevalence           0.003373 0.001172
+Detection Rate       0.002769 0.000426
+Detection Prevalence 0.008627 0.002130
+Balanced Accuracy    0.907588 0.680965
+     
+          A     B     C     D     E     F     G     H   Sum
+  A    1620   301   183    16   234     2     4     2  2362
+  B     127  6248   453    23   890     1     2     1  7745
+  C     112   276 10421    83   408     2     1     0 11303
+  D      38   160   659   100   341     1     0     3  1302
+  E     236  1389   696    75  2335    25     2     7  4765
+  F      43   100    31     4    69   136     4     2   389
+  G      25    61    18     3    43     9    78     6   243
+  H       5    22     9     0     6     2     4    12    60
+  Sum  2206  8557 12470   304  4326   178    95    33 28169
+> 
+> # ---------------------------
+> # 12) Helpers per predire con soglie su nuovi dati
+> # ---------------------------
+> predict_with_thresholds <- function(learner, new_df, thresholds,
++                                     return = c("labels", "prob", "both")) {
++   return <- match.arg(return)
++   learner$predict_type <- "prob"
++   p <- learner$predict_newdata(new_df)
++   cls_prob <- colnames(p$prob)
++   if (!all(cls_prob %in% names(thresholds))) {
++     stop("Le soglie non coprono tutte le classi di predizione: ",
++          paste(setdiff(cls_prob, names(thresholds)), collapse = ", "))
++   }
++   th <- thresholds[cls_prob]
++   d  <- max(1, max(th, na.rm = TRUE))
++   th <- th / d
++   th[!is.finite(th)] <- 1e-6
++   p$set_threshold(th)
++   if (return == "labels") return(p$response)
++   if (return == "prob")   return(p$prob)
++   list(labels = p$response, prob = p$prob)
++ }
+> 
+> make_thresholded_learner <- function(learner, thresholds, id = "th") {
++   g  <- mlr3pipelines::as_graph(learner)$clone(deep = TRUE)
++   g2 <- g %>>% po("threshold", id = id)
++   l2 <- as_learner(g2)
++   th <- thresholds
++   d  <- max(1, max(th, na.rm = TRUE))
++   th <- th / d
++   th[!is.finite(th)] <- 1e-6
++   l2$param_set$values[[sprintf("%s.threshold", id)]] <- th
++   l2$predict_type <- "prob"
++   l2
++ }
+> 
+> # Esempio (commentato):
+> # mod_xgb <- at_xgb$learner
+> # pred_labels_new <- predict_with_thresholds(mod_xgb, new_df, eq_xgb$thresholds_mlr3)
+> # mod_xgb_th <- make_thresholded_learner(mod_xgb, eq_xgb$thresholds_mlr3)
+> # pred_labels_new2 <- predict_with_thresholds(mod_xgb_th, new_df,
+> #                                             thresholds = setNames(rep(1, 8), LETTERS[1:8]))
+> 
+> proc.time()
+   utente   sistema trascorso 
+ 12697.67    109.37  10453.34 
